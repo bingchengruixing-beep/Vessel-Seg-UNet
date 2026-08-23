@@ -90,7 +90,9 @@ def main():
 
     # 构建验证数据集
     img_size = data_cfg['img_size']
-    val_transform = get_val_transforms(img_size)
+    val_transform = get_val_transforms(
+        img_size, keep_aspect_ratio=data_cfg.get('keep_aspect_ratio', True)
+    )
     val_dataset = VesselDataset(
         image_dir=data_cfg['val_image_dir'],
         mask_dir=data_cfg['val_mask_dir'],

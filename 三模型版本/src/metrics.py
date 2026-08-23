@@ -87,7 +87,8 @@ def calculate_precision(
 
     tp = (preds_flat * targets_flat).sum()
     fp = (preds_flat * (1 - targets_flat)).sum()
-    precision = (tp + eps) / (tp + fp + eps)
+    # eps 只出现在分母：空预测时返回 0 而不是 1.0。
+    precision = tp / (tp + fp + eps)
     return precision.item()
 
 
@@ -113,5 +114,33 @@ def calculate_recall(
 
     tp = (preds_flat * targets_flat).sum()
     fn = ((1 - preds_flat) * targets_flat).sum()
-    recall = (tp + eps) / (tp + fn + eps)
+    # eps 只出现在分母：空目标时返回 0 而不是 1.0。
+    recall = tp / (tp + fn + eps)
     return recall.item()
+
+
+def dice_per_sample(
+    preds_binary: torch.Tensor,
+    targets: torch.Tensor,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """逐样本 Dice，返回 shape (B,) 的张量（用于训练期早停，与 evaluate.py 口径一致）。"""
+    preds_flat = preds_binary.flatten(start_dim=1)
+    targets_flat = targets.flatten(start_dim=1)
+    intersection = (preds_flat * targets_flat).sum(dim=1)
+    return (2.0 * intersection + eps) / (
+        preds_flat.sum(dim=1) + targets_flat.sum(dim=1) + eps
+    )
+
+
+def iou_per_sample(
+    preds_binary: torch.Tensor,
+    targets: torch.Tensor,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """逐样本 IoU，返回 shape (B,) 的张量。"""
+    preds_flat = preds_binary.flatten(start_dim=1)
+    targets_flat = targets.flatten(start_dim=1)
+    intersection = (preds_flat * targets_flat).sum(dim=1)
+    union = preds_flat.sum(dim=1) + targets_flat.sum(dim=1) - intersection
+    return (intersection + eps) / (union + eps)

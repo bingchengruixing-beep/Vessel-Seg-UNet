@@ -1,0 +1,58 @@
+# 实验11（修复版重跑）：U-Net + ImageNet 预训练 ResNet34 + 差分学习率（编码器 1e-5 / 解码器 1e-4）
+# 相对原实验11（unet_resnet_mixed_lowlr.yaml）的改动：
+#   1. DiceLoss 逐样本平均（losses.py）——修整 batch 求和导致的大前景主导梯度
+#   2. Precision/Recall eps 只在分母（metrics.py）——修空预测/空目标虚高
+#   3. 早停口径改为逐样本 Dice mean（trainer.py）——与 evaluate.py 一致
+#   4. keep_aspect_ratio: true（transforms.py）——等比例缩放+补边，不拉伸血管
+# 其余超参与原实验11完全一致，save_dir 换新目录避免覆盖旧权重。
+data:
+  train_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset2（4s）/normal"
+    - "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/train/images"
+  train_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset2（4s）/masks"
+    - "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/train/masks"
+  val_image_dir: "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/val/images"
+  val_mask_dir: "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/val/masks"
+  img_size: 512
+  keep_aspect_ratio: true
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 2
+  epochs: 100
+  learning_rate: 1.0e-4
+  encoder_lr_scale: 0.1   # 编码器 LR = 1e-4 * 0.1 = 1e-5
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_unet_resnet_lowlr_fixed"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true

@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from src.metrics import calculate_dice, calculate_iou
+from src.metrics import dice_per_sample, iou_per_sample
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,7 @@ class Trainer:
         total_dice = 0.0
         total_iou = 0.0
         num_batches = 0
+        num_samples = 0
 
         pbar = tqdm(
             self.val_loader,
@@ -153,15 +154,18 @@ class Trainer:
             preds_binary = (torch.sigmoid(logits) > 0.5).float()
 
             total_loss += loss.item()
-            total_dice += calculate_dice(preds_binary, masks)
-            total_iou += calculate_iou(preds_binary, masks)
+            # 逐样本 Dice/IoU 后再平均，与 evaluate.py 口径一致（与 batch 划分无关）
+            total_dice += dice_per_sample(preds_binary, masks).sum().item()
+            total_iou += iou_per_sample(preds_binary, masks).sum().item()
             num_batches += 1
+            num_samples += masks.size(0)
 
-        n = max(num_batches, 1)
+        n_batches = max(num_batches, 1)
+        n_samples = max(num_samples, 1)
         return {
-            'val_loss': total_loss / n,
-            'dice': total_dice / n,
-            'iou': total_iou / n,
+            'val_loss': total_loss / n_batches,
+            'dice': total_dice / n_samples,
+            'iou': total_iou / n_samples,
         }
 
     def _save_checkpoint(self, filename: str, metrics: dict):

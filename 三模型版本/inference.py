@@ -68,8 +68,10 @@ class VesselSegmentor:
         self.model.to(self.device)
         self.model.eval()
 
-        # 推理用的增强管线（仅 Resize + Normalize）
-        self.transform = get_val_transforms(img_size)
+        # 推理用的增强管线（仅尺寸统一 + Normalize）
+        # 注：inference 的 resize-back 目前按「拉伸」口径实现，暂不接 keep_aspect_ratio，
+        #     等部署真正需要时再统一为等比例缩放 + 反补边。
+        self.transform = get_val_transforms(img_size, keep_aspect_ratio=False)
 
     @torch.no_grad()
     def predict(self, image_path: str) -> np.ndarray:

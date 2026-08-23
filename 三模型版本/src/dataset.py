@@ -99,6 +99,14 @@ class VesselDataset(Dataset):
         # 硬阈值二值化：>127 → 255, 其余 → 0
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
+        # 防御：极少数 image/mask 原生尺寸不一致（标注误差），把 mask 缩放到与 image 一致，
+        # 避免 keep_aspect_ratio 等几何变换因尺寸错位而崩溃。
+        if mask.shape[:2] != image.shape[:2]:
+            mask = cv2.resize(
+                mask, (image.shape[1], image.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
         # ── 数据增强 ──
         if self.transform is not None:
             augmented = self.transform(image=image, mask=mask)
@@ -137,9 +145,10 @@ def get_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
     num_workers = data_cfg.get('num_workers', 0)
     pin_memory = data_cfg.get('pin_memory', True)
 
-    # 构建增强管线
-    train_transform = get_train_transforms(img_size)
-    val_transform = get_val_transforms(img_size)
+    # 构建增强管线（等比例缩放 + 补边，避免非方形 DSA 被拉伸）
+    keep_aspect_ratio = data_cfg.get('keep_aspect_ratio', True)
+    train_transform = get_train_transforms(img_size, keep_aspect_ratio=keep_aspect_ratio)
+    val_transform = get_val_transforms(img_size, keep_aspect_ratio=keep_aspect_ratio)
 
     # 构建数据集
     train_dataset = VesselDataset(
