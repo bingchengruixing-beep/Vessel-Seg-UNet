@@ -3,10 +3,10 @@ dataset:
   num_workers: 4
   pin_memory: true
   keep_aspect_ratio: true
-  train_image_dir: C:\Users\12751\Downloads\DSCA数据集-已整合\dataset2（4s）\normal
-  train_mask_dir: C:\Users\12751\Downloads\DSCA数据集-已整合\dataset2（4s）\masks
-  val_image_dir: C:/Users/12751/Downloads/DSCA数据集-已整合/开源数据集；DIAS/train/images
-  val_mask_dir: C:/Users/12751/Downloads/DSCA数据集-已整合/开源数据集；DIAS/train/masks
+  train_image_dir: C:/Users/12751/Downloads/DSCA数据集-已整合/开源数据集；DIAS/train/images
+  train_mask_dir: C:/Users/12751/Downloads/DSCA数据集-已整合/开源数据集；DIAS/train/masks
+  val_image_dir: C:\Users\12751\Downloads\DSCA数据集-已整合\训练用数据\val\images
+  val_mask_dir: C:\Users\12751\Downloads\DSCA数据集-已整合\训练用数据\val\masks
 model:
   name: attention_unet
   in_channels: 1

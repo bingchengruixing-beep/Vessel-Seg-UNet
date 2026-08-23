@@ -94,6 +94,14 @@ class VesselDataset(Dataset):
         # 硬阈值二值化：>127 → 255, 其余 → 0
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
+        # ── 尺寸自适应对齐：若掩膜与原图尺寸不一致，将其插值对齐到图像尺寸 ──
+        if mask.shape != image.shape:
+            mask = cv2.resize(
+                mask,
+                (image.shape[1], image.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+
         # ── 数据增强 ──
         if self.transform is not None:
             augmented = self.transform(image=image, mask=mask)

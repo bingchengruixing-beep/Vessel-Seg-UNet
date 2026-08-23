@@ -412,12 +412,19 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (!res.ok) throw new Error('Failed to save config');
-            showToast('配置已保存', 'success');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.message || '保存配置失败');
+            }
+            if (data.note) {
+                showToast(data.note, 'info');
+            } else {
+                showToast('配置已保存', 'success');
+            }
             await fetchConfig();
         } catch (e) {
             console.error(e);
-            showToast('保存配置失败', 'error');
+            showToast(`保存配置失败: ${e.message}`, 'error');
         }
     }
 

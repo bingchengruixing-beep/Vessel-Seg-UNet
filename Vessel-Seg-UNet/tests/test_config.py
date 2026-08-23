@@ -19,3 +19,15 @@ def test_legacy_config_is_migrated_to_canonical_training_sections(tmp_path):
 def test_checkpoint_directory_cannot_escape_project_root():
     with pytest.raises(ConfigError, match="project-relative"):
         normalize_config({"training": {"checkpoint": {"save_dir": "../outside"}}})
+
+
+@pytest.mark.parametrize("model_name", ["unet_baseline", "attention_unet", "unet_resnet"])
+def test_valid_model_names_are_accepted(model_name):
+    config = normalize_config({"model": {"name": model_name}})
+    assert config["model"]["name"] == model_name
+
+
+def test_unknown_model_name_raises_config_error():
+    with pytest.raises(ConfigError, match="model.name must be"):
+        normalize_config({"model": {"name": "invalid_model_arch"}})
+

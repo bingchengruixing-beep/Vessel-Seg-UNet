@@ -150,8 +150,8 @@ def validate_config(config: Mapping[str, Any]) -> None:
         raise ConfigError("dataset.keep_aspect_ratio must be boolean")
     _positive_int(model.get("in_channels"), "model.in_channels")
     _positive_int(model.get("out_channels"), "model.out_channels")
-    if model.get("name") not in {"unet_baseline", "attention_unet"}:
-        raise ConfigError("model.name must be 'unet_baseline' or 'attention_unet'")
+    if model.get("name") not in {"unet_baseline", "attention_unet", "unet_resnet"}:
+        raise ConfigError("model.name must be 'unet_baseline', 'attention_unet', or 'unet_resnet'")
 
     _positive_int(training.get("batch_size"), "training.batch_size")
     _positive_int(training.get("epochs"), "training.epochs")

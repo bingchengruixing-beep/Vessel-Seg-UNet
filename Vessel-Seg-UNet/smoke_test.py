@@ -31,7 +31,7 @@ from src.dataset import VesselDataset, get_dataloaders
 from src.transforms import get_train_transforms, get_val_transforms
 
 config = yaml.safe_load(open("configs/default.yaml", encoding="utf-8"))
-data_cfg = config["data"]
+data_cfg = config.get("dataset", config.get("data"))
 
 val_ds = VesselDataset(
     data_cfg["val_image_dir"], data_cfg["val_mask_dir"],
