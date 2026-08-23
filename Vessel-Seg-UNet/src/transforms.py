@@ -11,28 +11,47 @@
 """
 
 import albumentations as A
+import cv2
 from albumentations.pytorch import ToTensorV2
 
 
-def get_train_transforms(img_size: int = 512) -> A.Compose:
+def _resize_or_pad(img_size: int, keep_aspect_ratio: bool) -> list:
+    """Build a spatial normalization pipeline shared by training and inference."""
+    if not keep_aspect_ratio:
+        return [A.Resize(img_size, img_size)]
+    return [
+        A.LongestMaxSize(max_size=img_size, interpolation=cv2.INTER_LINEAR),
+        A.PadIfNeeded(
+            min_height=img_size,
+            min_width=img_size,
+            border_mode=cv2.BORDER_CONSTANT,
+        ),
+    ]
+
+
+def get_train_transforms(
+    img_size: int = 512,
+    keep_aspect_ratio: bool = True,
+) -> A.Compose:
     """
     返回训练阶段的 Albumentations 增强管线。
 
     包含:
         - 几何变换: 随机翻转、旋转(±30°)、弹性形变
         - 对比度/亮度扰动: CLAHE、RandomBrightnessContrast
-        - 尺寸统一: Resize → img_size x img_size
+        - 尺寸统一: 等比例缩放 + 补边（可选退回强制 Resize）
         - 归一化: [0, 255] → [0, 1]
         - ToTensorV2: numpy → torch.Tensor
 
     Args:
         img_size: 输出图像的边长（正方形）
+        keep_aspect_ratio: 是否等比例缩放并补边，避免拉伸血管形态
 
     Returns:
         Albumentations Compose 对象
     """
     return A.Compose([
-        A.Resize(img_size, img_size),
+        *_resize_or_pad(img_size, keep_aspect_ratio),
         # ── 几何变换 ──
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
@@ -52,19 +71,23 @@ def get_train_transforms(img_size: int = 512) -> A.Compose:
     ], is_check_shapes=False)
 
 
-def get_val_transforms(img_size: int = 512) -> A.Compose:
+def get_val_transforms(
+    img_size: int = 512,
+    keep_aspect_ratio: bool = True,
+) -> A.Compose:
     """
     返回验证/测试阶段的 Albumentations 增强管线。
     仅做 Resize + 归一化，不做随机增强。
 
     Args:
         img_size: 输出图像的边长（正方形）
+        keep_aspect_ratio: 是否等比例缩放并补边，避免拉伸血管形态
 
     Returns:
         Albumentations Compose 对象
     """
     return A.Compose([
-        A.Resize(img_size, img_size),
+        *_resize_or_pad(img_size, keep_aspect_ratio),
         A.Normalize(mean=[0.0], std=[1.0], max_pixel_value=255.0),
         ToTensorV2(),
     ], is_check_shapes=False)

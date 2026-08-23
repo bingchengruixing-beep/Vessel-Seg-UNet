@@ -1,42 +1,29 @@
-"""
-[M3] 训练与验证循环逻辑
-拼装 M1 的数据和 M2 的模型，执行前向、反向传播、梯度更新及断点保存。
-支持自动混合精度（AMP）以应对游戏本显存不足的场景。
+"""Shared training loop used by both the CLI and the local Web interface."""
 
-接口契约:
-    Trainer.train_one_epoch() -> float (平均 Loss)
-    Trainer.validate() -> dict (含 val_loss, dice, iou 等指标)
-    Trainer.run() -> None (完整训练循环，含早停与模型保存)
-"""
+from __future__ import annotations
 
-import os
 import logging
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Dict, Optional
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.metrics import calculate_dice, calculate_iou
+from src.checkpoints import save_checkpoint
+from src.metrics import MetricAccumulator
+from src.prediction import predictions_from_logits
+
 
 logger = logging.getLogger(__name__)
+EpochCallback = Callable[[Dict[str, float]], None]
+StopCallback = Callable[[], bool]
 
 
 class Trainer:
-    """
-    统一的训练管理器。
-
-    Args:
-        model: 分割模型 (nn.Module)
-        train_loader: 训练 DataLoader
-        val_loader: 验证 DataLoader
-        criterion: 损失函数 (nn.Module)
-        optimizer: 优化器
-        scheduler: 学习率调度器（可选）
-        config: 全局配置字典
-    """
+    """Train a segmentation model and emit structured progress for any UI."""
 
     def __init__(
         self,
@@ -46,200 +33,191 @@ class Trainer:
         criterion: nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler=None,
-        config: dict = None,
+        config: Optional[dict] = None,
+        checkpoint_dir: Optional[str | Path] = None,
+        on_epoch_end: Optional[EpochCallback] = None,
+        should_stop: Optional[StopCallback] = None,
+        device: Optional[str | torch.device] = None,
     ):
         self.config = config or {}
-        train_cfg = self.config.get('training', {})
-        ckpt_cfg = self.config.get('checkpoint', {})
+        train_cfg = self.config["training"]
+        checkpoint_cfg = train_cfg["checkpoint"]
 
-        # 设备自动检测（严禁写死 'cuda:0'）
-        self.device = torch.device(
-            'cuda' if torch.cuda.is_available() else 'cpu'
-        )
-        logger.info(f"Using device: {self.device}")
-
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"Requested device {self.device} but CUDA is not available")
+        logger.info("Using device: %s", self.device)
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.epochs = train_cfg["epochs"]
+        self.use_amp = bool(train_cfg["use_amp"]) and self.device.type == "cuda"
+        self.patience = train_cfg["early_stopping"]["patience"]
+        self.save_best_only = checkpoint_cfg["save_best_only"]
+        self.save_interval = checkpoint_cfg["save_interval"]
+        self.save_dir = Path(checkpoint_dir or checkpoint_cfg["save_dir"])
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.on_epoch_end = on_epoch_end
+        self.should_stop = should_stop or (lambda: False)
 
-        # 训练参数
-        self.epochs = train_cfg.get('epochs', 100)
-        self.use_amp = train_cfg.get('use_amp', True) and self.device.type == 'cuda'
-
-        # 早停参数
-        self.patience = ckpt_cfg.get('early_stopping_patience', 15)
-        self.save_best_only = ckpt_cfg.get('save_best_only', True)
-        self.save_dir = ckpt_cfg.get('save_dir', 'checkpoints')
-        os.makedirs(self.save_dir, exist_ok=True)
-
-        # AMP 混合精度
         self.scaler = GradScaler(enabled=self.use_amp)
-
-        # 训练状态
-        self.best_dice = 0.0
+        self.best_dice = float("-inf")
         self.epochs_no_improve = 0
         self.current_epoch = 0
 
-    def train_one_epoch(self) -> float:
-        """
-        执行一轮训练。
+    def _is_stop_requested(self) -> bool:
+        return bool(self.should_stop())
 
-        Returns:
-            平均训练 Loss
-        """
+    def train_one_epoch(self) -> Optional[float]:
+        """Execute one epoch. ``None`` means a stop was requested."""
         self.model.train()
         total_loss = 0.0
         num_batches = 0
-
-        pbar = tqdm(
+        progress = tqdm(
             self.train_loader,
             desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
             leave=False,
         )
-
-        for images, masks in pbar:
-            images = images.to(self.device)
-            masks = masks.to(self.device)
-
-            self.optimizer.zero_grad()
-
+        for images, masks in progress:
+            if self._is_stop_requested():
+                return None
+            images = images.to(self.device, non_blocking=True)
+            masks = masks.to(self.device, non_blocking=True)
+            self.optimizer.zero_grad(set_to_none=True)
             with autocast(enabled=self.use_amp):
                 logits = self.model(images)
                 loss = self.criterion(logits, masks)
-
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
-
             total_loss += loss.item()
             num_batches += 1
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
-
-        avg_loss = total_loss / max(num_batches, 1)
-        return avg_loss
+            progress.set_postfix(loss=f"{loss.item():.4f}")
+        if num_batches == 0:
+            raise RuntimeError("Training DataLoader produced no batches")
+        return total_loss / num_batches
 
     @torch.no_grad()
-    def validate(self) -> dict:
-        """
-        执行一轮验证，计算损失和评估指标。
-
-        Returns:
-            字典: {val_loss, dice, iou}
-        """
+    def validate(self) -> Optional[Dict[str, float]]:
+        """Evaluate one epoch with the same optional postprocessing as deployment."""
         self.model.eval()
         total_loss = 0.0
-        total_dice = 0.0
-        total_iou = 0.0
+        accumulator = MetricAccumulator()
         num_batches = 0
-
-        pbar = tqdm(
+        evaluation_cfg = self.config["evaluation"]
+        inference_cfg = self.config["inference"]
+        progress = tqdm(
             self.val_loader,
             desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Val]",
             leave=False,
         )
-
-        for images, masks in pbar:
-            images = images.to(self.device)
-            masks = masks.to(self.device)
-
+        for images, masks in progress:
+            if self._is_stop_requested():
+                return None
+            images = images.to(self.device, non_blocking=True)
+            masks = masks.to(self.device, non_blocking=True)
             with autocast(enabled=self.use_amp):
                 logits = self.model(images)
                 loss = self.criterion(logits, masks)
-
-            # 阈值化预测 (Sigmoid → >0.5 → binary)
-            preds_binary = (torch.sigmoid(logits) > 0.5).float()
-
+            predictions = predictions_from_logits(
+                logits,
+                threshold=evaluation_cfg["threshold"],
+                apply_postprocess=evaluation_cfg["apply_postprocess"],
+                postprocess_config=inference_cfg["postprocess"],
+            )
             total_loss += loss.item()
-            total_dice += calculate_dice(preds_binary, masks)
-            total_iou += calculate_iou(preds_binary, masks)
+            accumulator.update(predictions, masks)
             num_batches += 1
-
-        n = max(num_batches, 1)
+        if num_batches == 0:
+            raise RuntimeError("Validation DataLoader produced no batches")
         return {
-            'val_loss': total_loss / n,
-            'dice': total_dice / n,
-            'iou': total_iou / n,
+            "val_loss": total_loss / num_batches,
+            # 全数据集像素级聚合，避免小 batch 与大 batch 权重相同带来的偏差。
+            "dice": accumulator.dice(),
+            "iou": accumulator.iou(),
         }
 
-    def _save_checkpoint(self, filename: str, metrics: dict):
-        """保存模型检查点。"""
-        path = os.path.join(self.save_dir, filename)
-        torch.save({
-            'epoch': self.current_epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'best_dice': self.best_dice,
-            'metrics': metrics,
-        }, path)
-        logger.info(f"Checkpoint saved: {path}")
+    def _save_checkpoint(self, filename: str, metrics: Dict[str, float]) -> None:
+        path = self.save_dir / filename
+        save_checkpoint(
+            path,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=self.current_epoch + 1,
+            best_dice=self.best_dice,
+            metrics=metrics,
+            config=self.config,
+        )
+        logger.info("Checkpoint saved: %s", path)
 
-    def run(self):
-        """
-        主训练循环。
-
-        包含:
-            - 逐轮训练 + 验证
-            - 学习率调度
-            - 早停机制（基于验证 Dice）
-            - 最佳模型自动保存
-        """
-        logger.info(f"Starting training for {self.epochs} epochs")
-        logger.info(f"AMP: {'ON' if self.use_amp else 'OFF'}")
+    def run(self) -> Dict[str, float | bool]:
+        """Run training, checkpointing, early stopping, and optional progress callbacks."""
+        logger.info("Starting training for %s epochs (AMP: %s)", self.epochs, self.use_amp)
+        last_metrics: Optional[Dict[str, float]] = None
+        stopped = False
 
         for epoch in range(self.epochs):
             self.current_epoch = epoch
-
-            # 训练
             train_loss = self.train_one_epoch()
-
-            # 验证
+            if train_loss is None:
+                stopped = True
+                break
             val_metrics = self.validate()
-            val_loss = val_metrics['val_loss']
-            val_dice = val_metrics['dice']
-            val_iou = val_metrics['iou']
+            if val_metrics is None:
+                stopped = True
+                break
 
-            # 学习率调度
+            last_metrics = val_metrics
+            val_dice = val_metrics["dice"]
             if self.scheduler is not None:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     self.scheduler.step(val_dice)
                 else:
                     self.scheduler.step()
+            current_lr = self.optimizer.param_groups[0]["lr"]
 
-            current_lr = self.optimizer.param_groups[0]['lr']
-
-            # 日志
-            logger.info(
-                f"Epoch [{epoch + 1}/{self.epochs}] "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Dice: {val_dice:.4f} | "
-                f"IoU: {val_iou:.4f} | "
-                f"LR: {current_lr:.2e}"
-            )
-
-            # 最佳模型保存 + 早停
             if val_dice > self.best_dice:
                 self.best_dice = val_dice
                 self.epochs_no_improve = 0
-                self._save_checkpoint('best_model.pth', val_metrics)
-                logger.info(f"★ New best Dice: {val_dice:.4f}")
+                self._save_checkpoint("best_model.pth", val_metrics)
+                logger.info("New best Dice: %.4f", val_dice)
             else:
                 self.epochs_no_improve += 1
-                logger.info(
-                    f"No improvement for {self.epochs_no_improve}/{self.patience} epochs"
-                )
 
-            # 早停判断
+            epoch_metrics: Dict[str, float] = {
+                "epoch": float(epoch + 1),
+                "train_loss": train_loss,
+                "val_loss": val_metrics["val_loss"],
+                "dice": val_dice,
+                "iou": val_metrics["iou"],
+                "best_dice": self.best_dice,
+                "lr": current_lr,
+            }
+            logger.info(
+                "Epoch [%s/%s] Train Loss: %.4f | Val Loss: %.4f | Dice: %.4f | IoU: %.4f | LR: %.2e",
+                epoch + 1, self.epochs, train_loss, val_metrics["val_loss"], val_dice,
+                val_metrics["iou"], current_lr,
+            )
+            if self.on_epoch_end:
+                self.on_epoch_end(epoch_metrics)
+
+            if not self.save_best_only and (epoch + 1) % self.save_interval == 0:
+                self._save_checkpoint(f"model_epoch_{epoch + 1}.pth", val_metrics)
             if self.epochs_no_improve >= self.patience:
-                logger.info(
-                    f"Early stopping triggered after {epoch + 1} epochs. "
-                    f"Best Dice: {self.best_dice:.4f}"
-                )
+                logger.info("Early stopping after %s epochs", epoch + 1)
                 break
 
-        # 保存最终模型
-        self._save_checkpoint('last_model.pth', val_metrics)
-        logger.info(f"Training complete. Best Dice: {self.best_dice:.4f}")
+        if last_metrics is not None and not self.save_best_only:
+            self._save_checkpoint("last_model.pth", last_metrics)
+        return {
+            "best_dice": self.best_dice if self.best_dice != float("-inf") else 0.0,
+            "stopped": stopped,
+            "completed_epochs": float(self.current_epoch + (0 if stopped else 1)),
+        }

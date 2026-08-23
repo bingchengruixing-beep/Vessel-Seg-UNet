@@ -16,7 +16,9 @@ class DiceLoss(nn.Module):
     """
     Soft Dice Loss
 
-    L_dice = 1 - (2 * sum(p * y) + smooth) / (sum(p) + sum(y) + smooth)
+    L_dice = 1 - mean_b (2 * sum(p_b * y_b) + smooth) / (sum(p_b) + sum(y_b) + smooth)
+
+    逐样本计算 Dice 后在 batch 上取平均，避免大前景样本主导梯度。
 
     Args:
         smooth: 平滑因子，防止分母为零（默认 1e-6）
@@ -36,11 +38,13 @@ class DiceLoss(nn.Module):
             标量 Dice Loss
         """
         preds = torch.sigmoid(logits)
-        intersection = (preds * targets).sum()
+        preds_flat = preds.flatten(start_dim=1)
+        targets_flat = targets.flatten(start_dim=1)
+        intersection = (preds_flat * targets_flat).sum(dim=1)
         dice = (2.0 * intersection + self.smooth) / (
-            preds.sum() + targets.sum() + self.smooth
+            preds_flat.sum(dim=1) + targets_flat.sum(dim=1) + self.smooth
         )
-        return 1.0 - dice
+        return (1.0 - dice).mean()
 
 
 class BCEDiceLoss(nn.Module):

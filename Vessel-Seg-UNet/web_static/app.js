@@ -255,14 +255,21 @@
                 els.checkpointTableBody.innerHTML = '';
                 data.forEach(cp => {
                     const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td style="padding: 8px;">${cp.name}</td>
-                        <td style="padding: 8px;">${formatBytes(cp.size)}</td>
-                        <td style="padding: 8px;">${formatDate(cp.modified)}</td>
-                        <td style="padding: 8px;">
-                            <button class="btn btn-sm" style="background: #da3633; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 4px;" onclick="window.deleteCheckpoint('${cp.name}')">删除</button>
-                        </td>
-                    `;
+                    [cp.name, formatBytes(cp.size), formatDate(cp.modified)].forEach(value => {
+                        const td = document.createElement('td');
+                        td.style.padding = '8px';
+                        td.textContent = value;
+                        tr.appendChild(td);
+                    });
+                    const actionCell = document.createElement('td');
+                    actionCell.style.padding = '8px';
+                    const button = document.createElement('button');
+                    button.className = 'btn btn-sm';
+                    button.style.cssText = 'background: #da3633; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 4px;';
+                    button.textContent = '删除';
+                    button.addEventListener('click', () => window.deleteCheckpoint(cp.name));
+                    actionCell.appendChild(button);
+                    tr.appendChild(actionCell);
                     els.checkpointTableBody.appendChild(tr);
                 });
             }
@@ -297,7 +304,7 @@
     window.deleteCheckpoint = async function(name) {
         if (!confirm(`确定要删除模型 ${name} 吗？`)) return;
         try {
-            const res = await fetch(`/api/checkpoints/${name}`, { method: 'DELETE' });
+            const res = await fetch(`/api/checkpoints/${encodeURIComponent(name)}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Delete failed');
             showToast(`已删除 ${name}`, 'success');
             fetchCheckpoints();
@@ -317,19 +324,19 @@
         setVal(els.cfgTrainMaskDir, cfg.dataset?.train_mask_dir || '');
         setVal(els.cfgValImageDir, cfg.dataset?.val_image_dir || '');
         setVal(els.cfgValMaskDir, cfg.dataset?.val_mask_dir || '');
-        setVal(els.cfgImgSize, cfg.dataset?.img_size || 256);
-        setVal(els.cfgNumWorkers, cfg.dataset?.num_workers || 4);
+        setVal(els.cfgImgSize, cfg.dataset?.img_size ?? 512);
+        setVal(els.cfgNumWorkers, cfg.dataset?.num_workers ?? 0);
 
-        setVal(els.cfgModelName, cfg.model?.name || 'unet');
-        setVal(els.cfgInChannels, cfg.model?.in_channels || 3);
+        setVal(els.cfgModelName, cfg.model?.name || 'unet_baseline');
+        setVal(els.cfgInChannels, cfg.model?.in_channels || 1);
         setVal(els.cfgOutChannels, cfg.model?.out_channels || 1);
 
         setVal(els.cfgBatchSize, cfg.training?.batch_size || 8);
         setVal(els.cfgLearningRate, cfg.training?.learning_rate || 0.001);
         setVal(els.cfgWeightDecay, cfg.training?.weight_decay || 0.0001);
         setVal(els.cfgEpochs, cfg.training?.epochs || 100);
-        setVal(els.cfgOptimizer, cfg.training?.optimizer || 'AdamW');
-        setVal(els.cfgScheduler, cfg.training?.scheduler || 'CosineAnnealingLR');
+        setVal(els.cfgOptimizer, cfg.training?.optimizer || 'adamw');
+        setVal(els.cfgScheduler, cfg.training?.scheduler || 'cosine');
         setCb(els.cfgUseAmp, cfg.training?.use_amp);
 
         const bce_w = cfg.training?.loss?.bce_weight ?? 0.5;
@@ -340,8 +347,8 @@
         if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = dice_w;
 
         setVal(els.cfgPatience, cfg.training?.early_stopping?.patience || 10);
-        setVal(els.cfgSaveDir, cfg.training?.save_dir || 'checkpoints');
-        setCb(els.cfgSaveBestOnly, cfg.training?.save_best_only);
+        setVal(els.cfgSaveDir, cfg.training?.checkpoint?.save_dir || 'checkpoints');
+        setCb(els.cfgSaveBestOnly, cfg.training?.checkpoint?.save_best_only);
     }
 
     function buildConfigFromForm() {
@@ -356,7 +363,9 @@
                 val_image_dir: getVal(els.cfgValImageDir),
                 val_mask_dir: getVal(els.cfgValMaskDir),
                 img_size: getNum(els.cfgImgSize),
-                num_workers: getNum(els.cfgNumWorkers)
+                num_workers: getNum(els.cfgNumWorkers),
+                pin_memory: state.config?.dataset?.pin_memory ?? true,
+                keep_aspect_ratio: state.config?.dataset?.keep_aspect_ratio ?? true
             },
             model: {
                 name: getVal(els.cfgModelName),
@@ -374,13 +383,23 @@
                 loss: {
                     name: 'BCEDiceLoss',
                     bce_weight: getNum(els.cfgBceWeight),
-                    dice_weight: getNum(els.cfgDiceWeight)
+                    dice_weight: getNum(els.cfgDiceWeight),
+                    dice_smooth: state.config?.training?.loss?.dice_smooth ?? 1e-6
                 },
                 early_stopping: {
                     patience: getNum(els.cfgPatience)
                 },
-                save_dir: getVal(els.cfgSaveDir),
-                save_best_only: getCb(els.cfgSaveBestOnly)
+                checkpoint: {
+                    save_dir: getVal(els.cfgSaveDir),
+                    save_best_only: getCb(els.cfgSaveBestOnly),
+                    save_interval: state.config?.training?.checkpoint?.save_interval ?? 10
+                }
+            },
+            evaluation: state.config?.evaluation ?? { threshold: 0.5, apply_postprocess: false },
+            inference: state.config?.inference ?? {
+                threshold: 0.5,
+                img_size: null,
+                postprocess: { enabled: true, min_component_size: 50, max_hole_size: 100, morph_close_kernel: 3 }
             }
         };
     }
