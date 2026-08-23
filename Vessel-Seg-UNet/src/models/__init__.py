@@ -7,12 +7,14 @@ import torch.nn as nn
 
 from src.models.unet import UNetBaseline
 from src.models.attention_unet import AttentionUNet
+from src.models.unet_resnet import UNetResNet
 
 
 # 模型注册表
 _MODEL_REGISTRY = {
     'unet_baseline': UNetBaseline,
     'attention_unet': AttentionUNet,
+    'unet_resnet': UNetResNet,
 }
 
 

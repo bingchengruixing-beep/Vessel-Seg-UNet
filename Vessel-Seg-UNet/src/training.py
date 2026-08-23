@@ -19,16 +19,24 @@ def build_criterion(config: dict) -> BCEDiceLoss:
 def build_optimizer(model: torch.nn.Module, config: dict) -> torch.optim.Optimizer:
     train_cfg = config["training"]
     name = train_cfg["optimizer"].lower()
-    kwargs = {
-        "lr": train_cfg["learning_rate"],
-        "weight_decay": train_cfg["weight_decay"],
-    }
+    
+    if hasattr(model, 'get_param_groups'):
+        encoder_lr_scale = config.get("model", {}).get("encoder_lr_scale", 0.1)
+        params = model.get_param_groups(train_cfg["learning_rate"], encoder_lr_scale)
+        kwargs = {"weight_decay": train_cfg["weight_decay"]}
+    else:
+        params = model.parameters()
+        kwargs = {
+            "lr": train_cfg["learning_rate"],
+            "weight_decay": train_cfg["weight_decay"],
+        }
+
     if name == "adamw":
-        return torch.optim.AdamW(model.parameters(), **kwargs)
+        return torch.optim.AdamW(params, **kwargs)
     if name == "adam":
-        return torch.optim.Adam(model.parameters(), **kwargs)
+        return torch.optim.Adam(params, **kwargs)
     if name == "sgd":
-        return torch.optim.SGD(model.parameters(), momentum=0.9, **kwargs)
+        return torch.optim.SGD(params, momentum=0.9, **kwargs)
     raise ValueError(f"Unknown optimizer: {name}")
 
 
