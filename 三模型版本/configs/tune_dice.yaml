@@ -1,0 +1,48 @@
+# 调参实验：提高 Dice 权重（0.5→0.7）强化前景分割，抑制细血管漏检
+data:
+  train_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/dataset2（4s）/normal"
+  train_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset1/5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/dataset2（4s）/masks"
+  val_image_dir: "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/val/images"
+  val_mask_dir: "E:/Unet模型训练/数据集-标注完成/开源数据集；DIAS/val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_baseline"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 4
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.3
+  dice_weight: 0.7
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_tunedice"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true
