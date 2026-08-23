@@ -1,0 +1,27 @@
+dataset:
+  img_size: 512
+  num_workers: 0
+  train_image_dir: "C:\\Users\\12751\\Downloads\\DSCA数据集-已整合\\dataset2（4s）\\normal"
+  train_mask_dir: "C:\\Users\\12751\\Downloads\\DSCA数据集-已整合\\dataset2（4s）\\masks"
+  val_image_dir: "C:\\Users\\12751\\Downloads\\DSCA数据集-已整合\\dataset1\\2~3s\\normal"
+  val_mask_dir: "C:\\Users\\12751\\Downloads\\DSCA数据集-已整合\\dataset1\\2~3s\\masks"
+model:
+  in_channels: 1
+  name: unet_baseline
+  out_channels: 1
+training:
+  batch_size: 1
+  early_stopping:
+    patience: 10
+  epochs: 100
+  learning_rate: 0.0001
+  loss:
+    bce_weight: 0.5
+    dice_weight: 0.5
+    name: BCEDiceLoss
+  optimizer: adamw
+  save_best_only: false
+  save_dir: checkpoints
+  scheduler: cosine
+  use_amp: true
+  weight_decay: 0.0001

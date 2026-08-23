@@ -1,0 +1,16 @@
+/.idea
+/.venv
+/advanced_smooth.py
+/checkpoints
+/dataset1
+/dataset2（4s）
+/experiment.py
+/requirements.txt
+/server.py
+/static
+/test_gray.png
+/test_gt.png
+/test_pred.png
+/__pycache__
+/开源数据集；DIAS
+/脑血管造影 U-Net 训练指南.docx

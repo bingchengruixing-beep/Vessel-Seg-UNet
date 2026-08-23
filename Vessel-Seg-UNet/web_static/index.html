@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>脑血管 U-Net 训练平台</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%230d1117%22/><circle cx=%2250%22 cy=%2250%22 r=%2230%22 stroke=%2258a6ff%22 stroke-width=%228%22 fill=%22none%22/><circle cx=%2250%22 cy=%2250%22 r=%228%22 fill=%2258a6ff%22/></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ══ TOAST CONTAINER ══ -->
+<div id="toast-container"></div>
+
+<!-- ══ HEADER ══ -->
+<header class="header">
+    <div class="header-left">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+            <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+        </svg>
+        <h1 class="header-title">脑血管 U-Net 训练平台</h1>
+    </div>
+    <div class="header-right">
+        <div class="training-status-wrap">
+            <span class="status-dot" id="training-indicator"></span>
+            <span id="training-indicator-text" class="status-text">空闲</span>
+        </div>
+        <div class="gpu-badge" id="system-status-badge">检测中...</div>
+    </div>
+</header>
+
+<!-- ══ TAB NAV ══ -->
+<nav class="tab-nav">
+    <button class="tab-btn active" data-tab="dashboard">仪表盘</button>
+    <button class="tab-btn" data-tab="config">训练配置</button>
+    <button class="tab-btn" data-tab="inference">模型推理</button>
+    <button class="tab-btn" data-tab="system">系统信息</button>
+</nav>
+
+<!-- ══ MAIN CONTENT ══ -->
+<main class="main-content">
+
+    <!-- ─── TAB 1: 仪表盘 ─── -->
+    <section id="tab-dashboard" class="tab-content active">
+
+        <!-- Metric Cards -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">当前轮次</div>
+                <div class="metric-value" id="metric-epoch">0 / —</div>
+            </div>
+            <div class="metric-card highlight-success">
+                <div class="metric-label">最佳 Dice</div>
+                <div class="metric-value success" id="metric-dice">0.0000</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">训练损失</div>
+                <div class="metric-value" id="metric-train-loss">—</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">验证损失</div>
+                <div class="metric-value" id="metric-val-loss">—</div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-row">
+            <div class="chart-card glass-panel">
+                <div class="chart-title">Loss 曲线</div>
+                <div class="chart-wrap">
+                    <canvas id="chart-loss"></canvas>
+                </div>
+            </div>
+            <div class="chart-card glass-panel">
+                <div class="chart-title">指标曲线 (Dice / IoU)</div>
+                <div class="chart-wrap">
+                    <canvas id="chart-metrics"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls + Log -->
+        <div class="controls-log-row">
+            <div class="controls-panel glass-panel">
+                <div class="controls-header">
+                    <div class="ctrl-buttons">
+                        <button class="btn btn-success" id="btn-start-training">▶ 开始训练</button>
+                        <button class="btn btn-danger" id="btn-stop-training" disabled>■ 停止训练</button>
+                    </div>
+                    <div class="lr-row">
+                        <span class="lr-label">当前学习率</span>
+                        <span class="mono" id="current-lr">—</span>
+                    </div>
+                </div>
+                <div class="progress-wrap">
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="epoch-progress" style="width:0%"></div>
+                    </div>
+                    <span class="progress-label" id="epoch-progress-text">0 / 0</span>
+                </div>
+            </div>
+            <div class="log-panel glass-panel">
+                <div class="log-title">训练日志</div>
+                <pre class="log-output" id="training-log">就绪，等待开始训练...</pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── TAB 2: 训练配置 ─── -->
+    <section id="tab-config" class="tab-content">
+        <div class="config-grid">
+
+            <!-- 数据配置 -->
+            <div class="config-card glass-panel">
+                <h3 class="card-title">📂 数据配置</h3>
+                <div class="form-group">
+                    <label>训练图像路径</label>
+                    <input type="text" id="cfg-train-image-dir" placeholder="../dataset1/4s/normal">
+                </div>
+                <div class="form-group">
+                    <label>训练掩膜路径</label>
+                    <input type="text" id="cfg-train-mask-dir" placeholder="../dataset1/4s/masks">
+                </div>
+                <div class="form-group">
+                    <label>验证图像路径</label>
+                    <input type="text" id="cfg-val-image-dir" placeholder="../开源数据集；DIAS/val/images">
+                </div>
+                <div class="form-group">
+                    <label>验证掩膜路径</label>
+                    <input type="text" id="cfg-val-mask-dir" placeholder="../开源数据集；DIAS/val/masks">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>图像尺寸</label>
+                        <input type="number" id="cfg-img-size" value="512" min="64" step="32">
+                    </div>
+                    <div class="form-group">
+                        <label>Workers 数量</label>
+                        <input type="number" id="cfg-num-workers" value="0" min="0" max="16">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模型配置 -->
+            <div class="config-card glass-panel">
+                <h3 class="card-title">🧠 模型配置</h3>
+                <div class="form-group">
+                    <label>模型架构</label>
+                    <select id="cfg-model-name">
+                        <option value="unet_baseline">U-Net Baseline</option>
+                        <option value="attention_unet">Attention U-Net</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>输入通道数</label>
+                        <input type="number" id="cfg-in-channels" value="1" min="1" max="4">
+                    </div>
+                    <div class="form-group">
+                        <label>输出通道数</label>
+                        <input type="number" id="cfg-out-channels" value="1" min="1" max="4">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 训练参数 -->
+            <div class="config-card glass-panel">
+                <h3 class="card-title">⚙️ 训练参数</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>批大小 (Batch Size)</label>
+                        <input type="number" id="cfg-batch-size" value="4" min="1" max="64">
+                    </div>
+                    <div class="form-group">
+                        <label>总轮次 (Epochs)</label>
+                        <input type="number" id="cfg-epochs" value="100" min="1">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>学习率</label>
+                        <input type="number" id="cfg-learning-rate" value="0.0001" step="0.00001">
+                    </div>
+                    <div class="form-group">
+                        <label>权重衰减</label>
+                        <input type="number" id="cfg-weight-decay" value="0.0001" step="0.00001">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>优化器</label>
+                        <select id="cfg-optimizer">
+                            <option value="adamw">AdamW</option>
+                            <option value="adam">Adam</option>
+                            <option value="sgd">SGD</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>学习率调度器</label>
+                        <select id="cfg-scheduler">
+                            <option value="cosine">Cosine Annealing</option>
+                            <option value="plateau">ReduceLROnPlateau</option>
+                            <option value="step">StepLR</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group switch-row">
+                    <label>混合精度 AMP</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-use-amp" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 损失函数 -->
+            <div class="config-card glass-panel">
+                <h3 class="card-title">📉 损失函数权重</h3>
+                <div class="form-group">
+                    <div class="slider-label-row">
+                        <label>BCE 权重</label>
+                        <span class="mono" id="cfg-bce-weight-value">0.50</span>
+                    </div>
+                    <input type="range" id="cfg-bce-weight" class="range-input" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <div class="form-group">
+                    <div class="slider-label-row">
+                        <label>Dice 权重</label>
+                        <span class="mono" id="cfg-dice-weight-value">0.50</span>
+                    </div>
+                    <input type="range" id="cfg-dice-weight" class="range-input" min="0" max="1" step="0.05" value="0.5">
+                </div>
+                <p class="hint-text">两项权重之和应为 1.0（自动联动）</p>
+            </div>
+
+            <!-- 早停与保存 -->
+            <div class="config-card glass-panel">
+                <h3 class="card-title">💾 早停与保存</h3>
+                <div class="form-group">
+                    <label>早停耐心值 (Patience)</label>
+                    <input type="number" id="cfg-patience" value="15" min="1" max="100">
+                </div>
+                <div class="form-group">
+                    <label>权重保存目录</label>
+                    <input type="text" id="cfg-save-dir" value="checkpoints">
+                </div>
+                <div class="form-group switch-row">
+                    <label>仅保存最佳模型</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-save-best-only" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="config-actions">
+            <button class="btn btn-primary" id="btn-save-config">💾 保存配置</button>
+            <button class="btn btn-secondary" id="btn-reset-config">↺ 重置默认</button>
+        </div>
+    </section>
+
+    <!-- ─── TAB 3: 模型推理 ─── -->
+    <section id="tab-inference" class="tab-content">
+        <!-- Controls bar -->
+        <div class="infer-controls glass-panel">
+            <div class="form-group">
+                <label>模型权重</label>
+                <select id="inference-checkpoint">
+                    <option value="">— 请先选择 checkpoint —</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <div class="slider-label-row">
+                    <label>二值化阈值</label>
+                    <span class="mono" id="inference-threshold-value">0.50</span>
+                </div>
+                <input type="range" id="inference-threshold" class="range-input" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <button class="btn btn-primary" id="btn-run-inference">▶ 执行推理</button>
+        </div>
+
+        <!-- Drop zone -->
+        <div class="infer-drop-zone glass-panel" id="inference-dropzone">
+            <input type="file" id="inference-file-input" accept="image/*" style="display:none">
+            <div class="drop-icon">📁</div>
+            <p>拖拽图像至此，或<button class="link-btn" onclick="document.getElementById('inference-file-input').click()">点击上传</button></p>
+            <p class="hint-text">支持 .png, .jpg, .bmp, .tif</p>
+        </div>
+
+        <!-- Side-by-side results -->
+        <div class="infer-results-row">
+            <div class="infer-result-box glass-panel">
+                <div class="result-title">原始图像</div>
+                <div class="result-img-wrap">
+                    <img id="inference-original" alt="原始图像" style="display:none">
+                    <div class="img-placeholder" id="inf-orig-placeholder">暂无图像</div>
+                </div>
+            </div>
+            <div class="infer-result-box glass-panel">
+                <div class="result-title">预测掩膜</div>
+                <div class="result-img-wrap">
+                    <img id="inference-result" alt="预测掩膜" style="display:none">
+                    <div class="img-placeholder" id="inf-result-placeholder">执行推理后显示</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── TAB 4: 系统信息 ─── -->
+    <section id="tab-system" class="tab-content">
+        <div class="sys-grid">
+
+            <!-- 环境信息 -->
+            <div class="sys-card glass-panel">
+                <h3 class="card-title">🖥️ 环境信息</h3>
+                <ul class="info-list">
+                    <li><span class="info-label">GPU 型号</span><span id="sys-gpu-name" class="mono">检测中...</span></li>
+                    <li><span class="info-label">显存信息</span><span id="sys-gpu-memory" class="mono">—</span></li>
+                    <li><span class="info-label">Python 版本</span><span id="sys-python" class="mono">—</span></li>
+                    <li><span class="info-label">PyTorch 版本</span><span id="sys-torch" class="mono">—</span></li>
+                </ul>
+            </div>
+
+            <!-- 数据集统计 -->
+            <div class="sys-card glass-panel">
+                <h3 class="card-title">📊 数据集统计</h3>
+                <ul class="info-list">
+                    <li><span class="info-label">训练集图像数</span><span id="dataset-train-count" class="mono">—</span></li>
+                    <li><span class="info-label">训练集路径</span><span id="dataset-train-path" class="mono path-text">—</span></li>
+                    <li><span class="info-label">验证集图像数</span><span id="dataset-val-count" class="mono">—</span></li>
+                    <li><span class="info-label">验证集路径</span><span id="dataset-val-path" class="mono path-text">—</span></li>
+                </ul>
+            </div>
+
+            <!-- 模型权重管理 -->
+            <div class="sys-card sys-card-wide glass-panel">
+                <h3 class="card-title">🗂️ 模型权重管理</h3>
+                <table class="ckpt-table">
+                    <thead>
+                        <tr>
+                            <th>文件名</th>
+                            <th>大小</th>
+                            <th>修改时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="checkpoint-table-body">
+                        <tr>
+                            <td colspan="4" class="table-empty">暂无权重文件</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    </section>
+
+</main>
+
+<!-- ══ SCRIPTS ══ -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
