@@ -53,10 +53,17 @@ def main():
         help='Generate overlay visualization images',
     )
     parser.add_argument(
-        '--output-dir', type=str, default='results/eval',
-        help='Directory to save evaluation results',
+        '--split', type=str, choices=['val', 'test'], default='val',
+        help='评估哪个集合：val=本地验证集，test=DIAS 外源测试集',
+    )
+    parser.add_argument(
+        '--output-dir', type=str, default=None,
+        help='Directory to save evaluation results（默认 results/eval_<split>）',
     )
     args = parser.parse_args()
+
+    if args.output_dir is None:
+        args.output_dir = f'results/eval_{args.split}'
 
     # 加载配置
     with open(args.config, 'r', encoding='utf-8') as f:
@@ -88,21 +95,32 @@ def main():
     model.to(device)
     model.eval()
 
-    # 构建验证数据集
+    # 选择评估集合：val（本地验证集）或 test（DIAS 外源测试集）
+    if args.split == 'test':
+        image_dir = data_cfg.get('test_image_dir')
+        mask_dir = data_cfg.get('test_mask_dir')
+        if not image_dir:
+            logger.error("config 未定义 test_image_dir，无法评估测试集")
+            sys.exit(1)
+    else:
+        image_dir = data_cfg['val_image_dir']
+        mask_dir = data_cfg['val_mask_dir']
+
+    # 构建评估数据集
     img_size = data_cfg['img_size']
-    val_transform = get_val_transforms(
+    eval_transform = get_val_transforms(
         img_size, keep_aspect_ratio=data_cfg.get('keep_aspect_ratio', True)
     )
     val_dataset = VesselDataset(
-        image_dir=data_cfg['val_image_dir'],
-        mask_dir=data_cfg['val_mask_dir'],
-        transform=val_transform,
+        image_dir=image_dir,
+        mask_dir=mask_dir,
+        transform=eval_transform,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=1, shuffle=False, num_workers=0
     )
 
-    logger.info(f"Evaluating on {len(val_dataset)} images...")
+    logger.info(f"Evaluating {args.split} split on {len(val_dataset)} images...")
 
     # ── 逐样本评估 ──
     all_dice = []

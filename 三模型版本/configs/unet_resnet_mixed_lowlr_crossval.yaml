@@ -1,0 +1,66 @@
+# 实验13（跨源验证版）：U-Net + ImageNet 预训练 ResNet34 + 差分学习率
+# 数据划分口径（用户方案）：
+#   - 训练集/验证集 = 本地手动标注 177 张，按病人整块切 80/20（142 / 35）
+#   - 测试集 = DIAS 外源 50 张（纯跨源测试，不参与训练）
+# 相对实验12（unet_resnet_mixed_lowlr_fixed.yaml）的唯一变化是 data 段：
+#   训练不再混入 DIAS，改用本地 142 张；验证改本地 35 张；新增 test 集（DIAS 50）。
+# 代码用实验12的修复版（逐样本 DiceLoss / P-R eps / keep_aspect_ratio）。
+data:
+  train_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds2_4s/normal"
+  train_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds1_5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/train/ds2_4s/masks"
+  val_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds2_4s/normal"
+  val_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds1_5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分/val/ds2_4s/masks"
+  test_image_dir: "E:/Unet模型训练/数据集-标注完成/跨源划分/test/images"
+  test_mask_dir: "E:/Unet模型训练/数据集-标注完成/跨源划分/test/masks"
+  img_size: 512
+  keep_aspect_ratio: true
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 2
+  epochs: 100
+  learning_rate: 1.0e-4
+  encoder_lr_scale: 0.1   # 编码器 LR = 1e-4 * 0.1 = 1e-5
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_unet_resnet_lowlr_crossval"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true
