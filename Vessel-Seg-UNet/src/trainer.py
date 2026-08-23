@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.checkpoints import save_checkpoint
-from src.metrics import calculate_dice, calculate_iou
+from src.metrics import MetricAccumulator
 from src.prediction import predictions_from_logits
 
 
@@ -37,12 +37,18 @@ class Trainer:
         checkpoint_dir: Optional[str | Path] = None,
         on_epoch_end: Optional[EpochCallback] = None,
         should_stop: Optional[StopCallback] = None,
+        device: Optional[str | torch.device] = None,
     ):
         self.config = config or {}
         train_cfg = self.config["training"]
         checkpoint_cfg = train_cfg["checkpoint"]
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"Requested device {self.device} but CUDA is not available")
         logger.info("Using device: %s", self.device)
         self.model = model.to(self.device)
         self.train_loader = train_loader
@@ -102,8 +108,7 @@ class Trainer:
         """Evaluate one epoch with the same optional postprocessing as deployment."""
         self.model.eval()
         total_loss = 0.0
-        total_dice = 0.0
-        total_iou = 0.0
+        accumulator = MetricAccumulator()
         num_batches = 0
         evaluation_cfg = self.config["evaluation"]
         inference_cfg = self.config["inference"]
@@ -127,15 +132,15 @@ class Trainer:
                 postprocess_config=inference_cfg["postprocess"],
             )
             total_loss += loss.item()
-            total_dice += calculate_dice(predictions, masks)
-            total_iou += calculate_iou(predictions, masks)
+            accumulator.update(predictions, masks)
             num_batches += 1
         if num_batches == 0:
             raise RuntimeError("Validation DataLoader produced no batches")
         return {
             "val_loss": total_loss / num_batches,
-            "dice": total_dice / num_batches,
-            "iou": total_iou / num_batches,
+            # 全数据集像素级聚合，避免小 batch 与大 batch 权重相同带来的偏差。
+            "dice": accumulator.dice(),
+            "iou": accumulator.iou(),
         }
 
     def _save_checkpoint(self, filename: str, metrics: Dict[str, float]) -> None:

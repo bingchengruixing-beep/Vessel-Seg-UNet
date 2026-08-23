@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 
+import torch
+
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT_DIR)
 
@@ -31,7 +33,20 @@ def main():
         default=os.path.join(ROOT_DIR, "configs", "default.yaml"),
         help="Path to a YAML config file",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to train on (auto by default; e.g. cuda, cuda:1, cpu)",
+    )
     args = parser.parse_args()
+    if args.device:
+        try:
+            requested_device = torch.device(args.device)
+        except RuntimeError as exc:
+            parser.error(f"Invalid --device value: {exc}")
+        if requested_device.type == "cuda" and not torch.cuda.is_available():
+            parser.error("CUDA was requested but is not available")
     config = load_config(args.config)
 
     logger.info("Vessel-Seg-UNet Training")
@@ -63,6 +78,7 @@ def main():
         scheduler=scheduler,
         config=config,
         checkpoint_dir=resolve_checkpoint_dir(config, ROOT_DIR),
+        device=args.device,
     )
     result = trainer.run()
     logger.info("Training complete. Best Dice: %.4f", result["best_dice"])

@@ -38,11 +38,21 @@ def main():
     parser.add_argument("--visualize", action="store_true", help="Save overlay visualizations")
     parser.add_argument("--postprocess", action="store_true", help="Evaluate deployed postprocessed masks")
     parser.add_argument("--threshold", type=float, default=None, help="Override sigmoid threshold")
+    parser.add_argument("--device", default=None, help="Device to evaluate on (auto by default; e.g. cuda, cuda:1, cpu)")
     parser.add_argument("--output-dir", default="results/eval", help="Directory for reports and images")
     args = parser.parse_args()
 
     data_config = load_config(args.config)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        device = (
+            torch.device(args.device)
+            if args.device
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+    except RuntimeError as exc:
+        parser.error(f"Invalid --device value: {exc}")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        parser.error("CUDA was requested but is not available")
     checkpoint = load_checkpoint(args.checkpoint, map_location=device)
     saved_config = checkpoint.get("config")
     runtime_config = normalize_config(saved_config) if isinstance(saved_config, dict) else data_config

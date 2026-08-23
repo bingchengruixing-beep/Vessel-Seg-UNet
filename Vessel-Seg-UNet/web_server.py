@@ -34,6 +34,8 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 16_000_000
 
 STATE_LOCK = threading.Lock()
+CONFIG_LOCK = threading.Lock()
+INFERENCE_LOCK = threading.Lock()
 training_state = {
     "running": False,
     "stop_requested": False,
@@ -56,6 +58,17 @@ def _snapshot_state():
         return copy.deepcopy(training_state)
 
 
+def _load_config():
+    """线程安全的配置读取：与 _save_config 共用 CONFIG_LOCK 防止读写交错。"""
+    with CONFIG_LOCK:
+        return load_config(CONFIG_PATH)
+
+
+def _save_config(payload):
+    with CONFIG_LOCK:
+        return save_config(CONFIG_PATH, payload)
+
+
 def _safe_checkpoint_name(filename: str) -> str:
     candidate = Path(filename)
     if not filename or candidate.name != filename or candidate.suffix.lower() != ".pth":
@@ -64,7 +77,7 @@ def _safe_checkpoint_name(filename: str) -> str:
 
 
 def _checkpoint_path(filename: str) -> Path:
-    return resolve_checkpoint_dir(load_config(CONFIG_PATH), PROJECT_ROOT) / _safe_checkpoint_name(filename)
+    return resolve_checkpoint_dir(_load_config(), PROJECT_ROOT) / _safe_checkpoint_name(filename)
 
 
 def _stop_requested() -> bool:
@@ -82,7 +95,7 @@ def _on_epoch_end(metrics):
 
 def run_training():
     try:
-        config = load_config(CONFIG_PATH)
+        config = _load_config()
         with STATE_LOCK:
             training_state["total_epochs"] = config["training"]["epochs"]
             training_state["message"] = "准备数据和模型..."
@@ -128,7 +141,7 @@ def index():
 
 @app.route("/api/config", methods=["GET"])
 def get_config():
-    return jsonify(load_config(CONFIG_PATH))
+    return jsonify(_load_config())
 
 
 @app.route("/api/config", methods=["POST"])
@@ -137,15 +150,20 @@ def update_config():
     if not isinstance(payload, dict):
         return jsonify({"success": False, "message": "配置必须是 JSON 对象"}), 400
     try:
-        saved = save_config(CONFIG_PATH, payload)
-        return jsonify({"success": True, "config": saved})
+        saved = _save_config(payload)
+        with STATE_LOCK:
+            running = training_state["running"]
+        response = {"success": True, "config": saved}
+        if running:
+            response["note"] = "训练进行中：配置已保存，将在下一次启动训练时生效。"
+        return jsonify(response)
     except ConfigError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
 
 
 @app.route("/api/dataset/info", methods=["GET"])
 def dataset_info():
-    config = load_config(CONFIG_PATH)
+    config = _load_config()
     dataset_cfg = config["dataset"]
 
     def image_count(path_value):
@@ -199,7 +217,7 @@ def train_status():
 
 @app.route("/api/model/info", methods=["GET"])
 def model_info():
-    config = load_config(CONFIG_PATH)
+    config = _load_config()
     model_cfg = config["model"]
     model = build_model(model_cfg["name"], in_channels=model_cfg["in_channels"], out_channels=model_cfg["out_channels"])
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
@@ -213,7 +231,7 @@ def model_info():
 
 @app.route("/api/checkpoints", methods=["GET"])
 def list_checkpoints():
-    directory = resolve_checkpoint_dir(load_config(CONFIG_PATH), PROJECT_ROOT)
+    directory = resolve_checkpoint_dir(_load_config(), PROJECT_ROOT)
     if not directory.exists():
         return jsonify([])
     checkpoints = [
@@ -237,6 +255,12 @@ def delete_checkpoint(filename):
 
 @app.route("/api/inference", methods=["POST"])
 def run_inference():
+    # 串行化推理请求：缓存更新与 segmentor.threshold 的修改需要互斥。
+    with INFERENCE_LOCK:
+        return _run_inference()
+
+
+def _run_inference():
     payload = request.get_json(silent=True) or {}
     try:
         image_b64 = payload["image_base64"]
@@ -257,7 +281,7 @@ def run_inference():
             inference_cache.update({
                 "path": model_path,
                 "mtime_ns": mtime_ns,
-                "segmentor": VesselSegmentor(str(model_path), config=load_config(CONFIG_PATH)),
+                "segmentor": VesselSegmentor(str(model_path), config=_load_config()),
             })
         segmentor = inference_cache["segmentor"]
         segmentor.threshold = threshold

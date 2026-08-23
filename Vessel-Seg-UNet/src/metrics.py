@@ -87,7 +87,8 @@ def calculate_precision(
 
     tp = (preds_flat * targets_flat).sum()
     fp = (preds_flat * (1 - targets_flat)).sum()
-    precision = (tp + eps) / (tp + fp + eps)
+    # eps 只出现在分母：空预测时返回 0 而不是 0.5。
+    precision = tp / (tp + fp + eps)
     return precision.item()
 
 
@@ -113,5 +114,47 @@ def calculate_recall(
 
     tp = (preds_flat * targets_flat).sum()
     fn = ((1 - preds_flat) * targets_flat).sum()
-    recall = (tp + eps) / (tp + fn + eps)
+    # eps 只出现在分母：空目标时返回 0 而不是 0.5。
+    recall = tp / (tp + fn + eps)
     return recall.item()
+
+
+class MetricAccumulator:
+    """全数据集像素级统计累加器，用于与 batch 划分无关的稳定指标。
+
+    逐 batch 平均指标会让每个 batch 权重相同（无论其内容多少）；
+    累加原始计数后在数据集层面一次性计算，得到与指标定义一致的
+    全局 Dice / IoU / Precision / Recall。
+    """
+
+    def __init__(self) -> None:
+        self.intersection = 0.0
+        self.pred_sum = 0.0
+        self.target_sum = 0.0
+
+    def update(self, preds_binary: torch.Tensor, targets: torch.Tensor) -> None:
+        """累积一个 batch 的二值预测与金标准统计量。"""
+        self.intersection += float((preds_binary * targets).sum().item())
+        self.pred_sum += float(preds_binary.sum().item())
+        self.target_sum += float(targets.sum().item())
+
+    def dice(self, eps: float = 1e-6) -> float:
+        """全局 Dice = 2|P∩T| / (|P| + |T| + eps)；P、T 均空时约定为 1.0。"""
+        return (2.0 * self.intersection + eps) / (
+            self.pred_sum + self.target_sum + eps
+        )
+
+    def iou(self, eps: float = 1e-6) -> float:
+        """全局 IoU = |P∩T| / (|P∪T| + eps)。"""
+        union = self.pred_sum + self.target_sum - self.intersection
+        return (self.intersection + eps) / (union + eps)
+
+    def precision(self, eps: float = 1e-6) -> float:
+        """全局 Precision；空预测时为 0。"""
+        fp = self.pred_sum - self.intersection
+        return self.intersection / (self.intersection + fp + eps)
+
+    def recall(self, eps: float = 1e-6) -> float:
+        """全局 Recall；空目标时为 0。"""
+        fn = self.target_sum - self.intersection
+        return self.intersection / (self.intersection + fn + eps)

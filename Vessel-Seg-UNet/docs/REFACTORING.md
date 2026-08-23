@@ -82,6 +82,8 @@ python inference.py --model checkpoints/best_model.pth --input path/to/image.png
 python web_server.py
 ```
 
+`train.py`、`evaluate.py`、`inference.py` 均支持 `--device` 参数（如 `cuda:1`、`cpu`），默认自动选择。
+
 运行测试：
 
 ```bash
@@ -94,3 +96,16 @@ pytest -q
 - 默认数据目录不再写入某台机器的绝对路径；请先配置 `dataset.*_dir`。
 - `save_best_only: true` 时仅保存 `best_model.pth`；设为 `false` 才会按照 `save_interval` 保存 epoch 模型并写出 `last_model.pth`。
 - 推理输出统一保存为 `.png`，不再出现文件内容为 PNG、扩展名却是 JPG 的情况。
+
+## 2026-08-23 修正批次
+
+本次修正解决了架构评审中发现的细节问题：
+
+- **损失函数**：`DiceLoss` 从"全 batch 像素求和"改为逐样本计算后取平均，避免大前景样本主导梯度（`BCEDiceLoss` 组合方式不变）。
+- **训练期指标**：早停依据的 Dice/IoU 从"逐 batch 平均"改为全数据集像素级聚合（新增 `src/metrics.py` 的 `MetricAccumulator`），与 batch 划分无关、更稳定。
+- **Precision/Recall 语义**：eps 只保留在分母，空预测/空目标时返回 0 而不是 0.5；P、T 均为空时 Dice/IoU 约定为 1.0。
+- **中文路径**：`inference.py` 的读写改用 `np.fromfile` + `cv2.imdecode` 与 `cv2.imencode` + 二进制写入，与 `dataset.py` 行为一致，修复 Windows 中文路径失败问题。
+- **设备选择**：`train.py` / `evaluate.py` / `inference.py` 新增 `--device`，`Trainer` 支持显式设备参数，非法设备与 CUDA 不可用会在启动时报错。
+- **Web 并发**：配置读写共用 `CONFIG_LOCK`；推理请求用 `INFERENCE_LOCK` 串行化，消除 `inference_cache` 与 `segmentor.threshold` 的竞态；训练进行中修改配置会返回提示（下次启动训练生效）。
+- **依赖清理**：移除未使用的 `scikit-image` 与 `scipy`。
+- **可测试性**：几何还原逻辑抽为 `inference.restore_original_geometry` 纯函数；新增 `tests/test_postprocess.py`、`tests/test_metrics.py`、`tests/test_losses.py` 并扩充几何还原测试。

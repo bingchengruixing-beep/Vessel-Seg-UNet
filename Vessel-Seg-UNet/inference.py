@@ -16,6 +16,30 @@ from src.prediction import predictions_from_logits
 from src.transforms import get_val_transforms
 
 
+def restore_original_geometry(
+    mask: np.ndarray,
+    original_h: int,
+    original_w: int,
+    img_size: int,
+    keep_aspect_ratio: bool,
+) -> np.ndarray:
+    """撤销预处理中的等比例缩放 + 居中补零（letterbox），还原到原图几何。
+
+    与 ``A.LongestMaxSize`` + ``A.PadIfNeeded`` 的居中补边顺序互逆：
+    先裁掉补边区域，再缩放回原始尺寸。供推理使用，也便于单元测试。
+    """
+    if keep_aspect_ratio:
+        scale = img_size / max(original_h, original_w)
+        resized_h = max(1, int(round(original_h * scale)))
+        resized_w = max(1, int(round(original_w * scale)))
+        top = (img_size - resized_h) // 2
+        left = (img_size - resized_w) // 2
+        mask = mask[top:top + resized_h, left:left + resized_w]
+    if mask.shape != (original_h, original_w):
+        mask = cv2.resize(mask, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
+    return mask
+
+
 class VesselSegmentor:
     """Load a trusted project checkpoint and produce postprocessed vessel masks."""
 
@@ -46,23 +70,19 @@ class VesselSegmentor:
 
         inference_cfg = self.config["inference"]
         self.img_size = img_size or inference_cfg["img_size"] or self.config["dataset"]["img_size"]
-        if not isinstance(self.img_size, int) or self.img_size <= 0:
-            raise ValueError("img_size must be a positive integer")
         self.keep_aspect_ratio = self.config["dataset"]["keep_aspect_ratio"]
         self.threshold = inference_cfg["threshold"] if threshold is None else threshold
-        if not 0.0 <= float(self.threshold) <= 1.0:
-            raise ValueError("threshold must be between 0 and 1")
         self.postprocess_config = dict(inference_cfg["postprocess"])
         if min_component_size is not None:
-            if min_component_size <= 0:
-                raise ValueError("min_component_size must be positive")
             self.postprocess_config["min_component_size"] = min_component_size
         self.transform = get_val_transforms(self.img_size, self.keep_aspect_ratio)
 
     @torch.no_grad()
     def predict(self, image_path: str) -> np.ndarray:
         """Read a grayscale image and return an original-size uint8 mask {0, 255}."""
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        # 使用 np.fromfile + cv2.imdecode 支持 Windows 中文路径。
+        image_buf = np.fromfile(image_path, dtype=np.uint8)
+        image = cv2.imdecode(image_buf, cv2.IMREAD_GRAYSCALE)
         if image is None:
             raise IOError(f"Failed to read image: {image_path}")
         return self.predict_array(image)
@@ -86,16 +106,9 @@ class VesselSegmentor:
 
     def _restore_original_geometry(self, mask: np.ndarray, original_h: int, original_w: int) -> np.ndarray:
         """Remove validation/inference padding before resizing the prediction back."""
-        if self.keep_aspect_ratio:
-            scale = self.img_size / max(original_h, original_w)
-            resized_h = max(1, int(round(original_h * scale)))
-            resized_w = max(1, int(round(original_w * scale)))
-            top = (self.img_size - resized_h) // 2
-            left = (self.img_size - resized_w) // 2
-            mask = mask[top:top + resized_h, left:left + resized_w]
-        if mask.shape != (original_h, original_w):
-            mask = cv2.resize(mask, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
-        return mask
+        return restore_original_geometry(
+            mask, original_h, original_w, self.img_size, self.keep_aspect_ratio
+        )
 
     @torch.no_grad()
     def predict_batch(self, image_paths: list[str]) -> list[np.ndarray]:
@@ -113,7 +126,15 @@ def main():
     parser.add_argument("--img-size", type=int, default=None, help="Override preprocessing size")
     parser.add_argument("--threshold", type=float, default=None, help="Override binarization threshold")
     parser.add_argument("--min-size", type=int, default=None, help="Override min component size")
+    parser.add_argument("--device", default=None, help="Device to run inference on (auto by default)")
     args = parser.parse_args()
+    if args.device:
+        try:
+            requested_device = torch.device(args.device)
+        except RuntimeError as exc:
+            parser.error(f"Invalid --device value: {exc}")
+        if requested_device.type == "cuda" and not torch.cuda.is_available():
+            parser.error("CUDA was requested but is not available")
 
     legacy_config = None
     if args.config:
@@ -126,6 +147,7 @@ def main():
         threshold=args.threshold,
         min_component_size=args.min_size,
         config=legacy_config,
+        device=args.device,
     )
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -143,8 +165,12 @@ def main():
     print(f"Processing {len(image_paths)} images...")
     for image_path in image_paths:
         out_path = output_dir / f"{image_path.stem}.png"
-        if not cv2.imwrite(str(out_path), segmentor.predict(str(image_path))):
-            raise IOError(f"Failed to write output: {out_path}")
+        # 使用 imencode + 二进制写文件，支持 Windows 中文路径。
+        success, encoded = cv2.imencode(".png", segmentor.predict(str(image_path)))
+        if not success:
+            raise IOError(f"Failed to encode output: {out_path}")
+        with open(out_path, "wb") as file:
+            file.write(encoded.tobytes())
         print(f"  {image_path.name} -> {out_path.name}")
 
 
