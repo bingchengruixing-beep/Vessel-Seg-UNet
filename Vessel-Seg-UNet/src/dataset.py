@@ -21,6 +21,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from typing import Optional, Tuple
 
+from src.config import resolve_data_path
 from src.transforms import get_train_transforms, get_val_transforms
 
 
@@ -113,12 +114,16 @@ class VesselDataset(Dataset):
         return image, mask
 
 
-def get_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
+def get_dataloaders(
+    config: dict,
+    project_root: Optional[str] = None,
+) -> Tuple[DataLoader, DataLoader]:
     """
     根据全局配置字典创建训练和验证 DataLoader。
 
     Args:
         config: 从 configs/default.yaml 加载的完整配置字典
+        project_root: 相对数据路径的解析根目录；默认使用当前工作目录
 
     Returns:
         (train_loader, val_loader)
@@ -132,18 +137,21 @@ def get_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
     pin_memory = data_cfg.get('pin_memory', True)
 
     # 构建增强管线
-    train_transform = get_train_transforms(img_size)
-    val_transform = get_val_transforms(img_size)
+    keep_aspect_ratio = data_cfg.get('keep_aspect_ratio', True)
+    train_transform = get_train_transforms(img_size, keep_aspect_ratio)
+    val_transform = get_val_transforms(img_size, keep_aspect_ratio)
+
+    root = project_root or os.getcwd()
 
     # 构建数据集
     train_dataset = VesselDataset(
-        image_dir=data_cfg['train_image_dir'],
-        mask_dir=data_cfg['train_mask_dir'],
+        image_dir=str(resolve_data_path(data_cfg['train_image_dir'], root)),
+        mask_dir=str(resolve_data_path(data_cfg['train_mask_dir'], root)),
         transform=train_transform,
     )
     val_dataset = VesselDataset(
-        image_dir=data_cfg['val_image_dir'],
-        mask_dir=data_cfg['val_mask_dir'],
+        image_dir=str(resolve_data_path(data_cfg['val_image_dir'], root)),
+        mask_dir=str(resolve_data_path(data_cfg['val_mask_dir'], root)),
         transform=val_transform,
     )
 
@@ -154,7 +162,8 @@ def get_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
         shuffle=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        drop_last=True,
+        # Do not silently produce zero train batches for a small dataset.
+        drop_last=len(train_dataset) >= batch_size,
     )
     val_loader = DataLoader(
         val_dataset,

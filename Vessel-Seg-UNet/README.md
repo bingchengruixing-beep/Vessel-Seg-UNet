@@ -32,6 +32,10 @@ Vessel-Seg-UNet/
 │   │   └── attention_unet.py   # [M2] Attention U-Net
 │   ├── losses.py               # [M3] BCE + Dice 损失函数
 │   ├── trainer.py              # [M3] 训练循环 (AMP + 早停)
+│   ├── training.py             # 损失、优化器与调度器工厂
+│   ├── config.py               # 配置归一化、校验与路径安全
+│   ├── checkpoints.py          # 版本化检查点读写
+│   ├── prediction.py           # 共享预测/后处理流程
 │   ├── metrics.py              # [M4] Dice / IoU / Precision / Recall
 │   ├── visualize.py            # [M4] 叠加对比图生成
 │   └── postprocess.py          # [M5] 连通域去噪
@@ -39,6 +43,7 @@ Vessel-Seg-UNet/
 ├── evaluate.py                 # 独立评估脚本
 ├── inference.py                # 推理 API
 ├── requirements.txt            # 依赖清单
+├── docs/REFACTORING.md         # 重构与迁移说明
 └── README.md
 ```
 
@@ -57,12 +62,14 @@ pip install -r requirements.txt
 编辑 `configs/default.yaml`，设置训练和验证数据的路径：
 
 ```yaml
-data:
-  train_image_dir: "../dataset1/4s/normal"
-  train_mask_dir: "../dataset1/4s/masks"
-  val_image_dir: "../开源数据集；DIAS/val/images"
-  val_mask_dir: "../开源数据集；DIAS/val/masks"
+dataset:
+  train_image_dir: "D:/datasets/dsa/train/images"
+  train_mask_dir: "D:/datasets/dsa/train/masks"
+  val_image_dir: "D:/datasets/dsa/val/images"
+  val_mask_dir: "D:/datasets/dsa/val/masks"
 ```
+
+相对路径以项目根目录为基准。配置结构、旧配置迁移、检查点兼容性与 Web 安全边界见 [重构说明](docs/REFACTORING.md)。
 
 ### 3. 开始训练
 
@@ -83,6 +90,14 @@ python evaluate.py --checkpoint checkpoints/best_model.pth --visualize
 ```bash
 python inference.py --model checkpoints/best_model.pth --input path/to/image.png
 ```
+
+### 6. 本地 Web 面板
+
+```bash
+python web_server.py
+```
+
+打开 `http://127.0.0.1:5001`。该服务仅供本机可信用户使用，请勿暴露到局域网或公网。
 
 或在代码中使用：
 

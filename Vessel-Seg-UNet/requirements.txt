@@ -8,3 +8,4 @@ scikit-image
 scipy
 pyyaml
 tqdm
+Flask>=2.3
