@@ -375,6 +375,20 @@ def _apply_processing_options(segmentor: VesselSegmentor, payload: dict) -> None
     mode = payload.get("processing", "config")
     if mode == "off":
         segmentor.postprocess_config["enabled"] = False
+    elif mode == "light":
+        segmentor.postprocess_config.update({
+            "enabled": True,
+            "min_component_size": 10,
+            "max_hole_size": 30,
+            "morph_close_kernel": 3,
+        })
+    elif mode == "strong":
+        segmentor.postprocess_config.update({
+            "enabled": True,
+            "min_component_size": 100,
+            "max_hole_size": 200,
+            "morph_close_kernel": 5,
+        })
     elif mode == "custom":
         min_component_size = int(payload.get("min_component_size", config["min_component_size"]))
         max_hole_size = int(payload.get("max_hole_size", config["max_hole_size"]))

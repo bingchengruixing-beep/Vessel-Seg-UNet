@@ -322,22 +322,11 @@
             <div class="form-group">
                 <label>后处理方式</label>
                 <select id="inference-processing">
-                    <option value="config">使用配置默认</option>
-                    <option value="off">关闭后处理</option>
-                    <option value="custom">开启并自定义</option>
+                    <option value="off">原始输出</option>
+                    <option value="light">轻度清理</option>
+                    <option value="config">标准清理</option>
+                    <option value="strong">强力清理</option>
                 </select>
-            </div>
-            <div class="form-group">
-                <label>最小连通域</label>
-                <input type="number" id="inference-min-component" min="0" step="1" value="50">
-            </div>
-            <div class="form-group">
-                <label>最大孔洞</label>
-                <input type="number" id="inference-max-hole" min="0" step="1" value="100">
-            </div>
-            <div class="form-group">
-                <label>闭运算核</label>
-                <input type="number" id="inference-morph-kernel" min="1" step="2" value="3">
             </div>
             <button class="btn btn-primary" id="btn-run-inference">▶ 执行推理</button>
         </div>

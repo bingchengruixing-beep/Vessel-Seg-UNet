@@ -83,9 +83,6 @@
         infThreshold: document.getElementById('inference-threshold'),
         infThresholdValue: document.getElementById('inference-threshold-value'),
         infProcessing: document.getElementById('inference-processing'),
-        infMinComponent: document.getElementById('inference-min-component'),
-        infMaxHole: document.getElementById('inference-max-hole'),
-        infMorphKernel: document.getElementById('inference-morph-kernel'),
         btnRunInference: document.getElementById('btn-run-inference'),
         thresholdScanValues: document.getElementById('threshold-scan-values'),
         btnThresholdScan: document.getElementById('btn-threshold-scan'),
@@ -774,11 +771,6 @@
         
         const threshold = els.infThreshold ? parseFloat(els.infThreshold.value) : 0.5;
         const processingOptions = getProcessingOptions();
-        const bodyOptions = {
-            min_component_size: Number(els.infMinComponent?.value || 50),
-            max_hole_size: Number(els.infMaxHole?.value || 100),
-            morph_close_kernel: Number(els.infMorphKernel?.value || 3)
-        };
 
         if (els.btnRunInference) {
             els.btnRunInference.disabled = true;
@@ -791,14 +783,12 @@
                 images: state.inferenceFiles.map(item => ({ name: item.name, image_base64: item.image_base64 })),
                 checkpoint: cp,
                 threshold: threshold,
-                ...processingOptions,
-                ...bodyOptions
+                ...processingOptions
             } : {
                 image_base64: state.inferenceImageBase64,
                 checkpoint: cp,
                 threshold: threshold,
-                ...processingOptions,
-                ...bodyOptions
+                ...processingOptions
             };
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -914,10 +904,7 @@
                 body: JSON.stringify({
                     checkpoint,
                     thresholds,
-                    ...getProcessingOptions(),
-                    min_component_size: Number(els.infMinComponent?.value || 50),
-                    max_hole_size: Number(els.infMaxHole?.value || 100),
-                    morph_close_kernel: Number(els.infMorphKernel?.value || 3)
+                    ...getProcessingOptions()
                 })
             });
             const data = await res.json();
