@@ -33,11 +33,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "optimizer": "adamw",
         "scheduler": "cosine",
         "use_amp": True,
+        "seed": 42,
+        "warmup_epochs": 5,
+        "grad_clip": 1.0,
+        "ema_decay": 0.999,
         "loss": {
             "name": "BCEDiceLoss",
             "bce_weight": 0.5,
             "dice_weight": 0.5,
             "dice_smooth": 1e-6,
+            # > 0 时启用 clDice 中心线监督(数据集会额外返回骨架)
+            "cl_dice_weight": 0.0,
+            "focal_tversky": {
+                "alpha": 0.7,
+                "beta": 0.3,
+                "gamma": 0.75,
+            },
         },
         "early_stopping": {"patience": 10},
         "checkpoint": {
@@ -157,6 +168,11 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _positive_int(training.get("epochs"), "training.epochs")
     _positive_float(training.get("learning_rate"), "training.learning_rate")
     _nonnegative_float(training.get("weight_decay"), "training.weight_decay")
+    _nonnegative_int(training.get("seed"), "training.seed")
+    _nonnegative_int(training.get("warmup_epochs"), "training.warmup_epochs")
+    _nonnegative_float(training.get("grad_clip"), "training.grad_clip")
+    if not isinstance(training.get("ema_decay"), (int, float)) or not 0.0 <= float(training["ema_decay"]) < 1.0:
+        raise ConfigError("training.ema_decay must be in [0, 1)")
     if str(training.get("optimizer", "")).lower() not in {"adam", "adamw", "sgd"}:
         raise ConfigError("training.optimizer must be adam, adamw, or sgd")
     if str(training.get("scheduler", "")).lower() not in {"cosine", "plateau", "step", "none"}:
@@ -168,11 +184,20 @@ def validate_config(config: Mapping[str, Any]) -> None:
     postprocess = inference.get("postprocess")
     if not all(isinstance(section, Mapping) for section in (loss, early_stopping, checkpoint, postprocess)):
         raise ConfigError("training loss/checkpoint settings and inference postprocess must be mappings")
+    if loss.get("name") not in {"BCEDiceLoss", "FocalTverskyLoss"}:
+        raise ConfigError("training.loss.name must be 'BCEDiceLoss' or 'FocalTverskyLoss'")
     bce_weight = _nonnegative_float(loss.get("bce_weight"), "training.loss.bce_weight")
     dice_weight = _nonnegative_float(loss.get("dice_weight"), "training.loss.dice_weight")
     if bce_weight + dice_weight <= 0:
         raise ConfigError("At least one loss weight must be positive")
     _positive_float(loss.get("dice_smooth"), "training.loss.dice_smooth")
+    _nonnegative_float(loss.get("cl_dice_weight"), "training.loss.cl_dice_weight")
+    focal_tversky = loss.get("focal_tversky")
+    if not isinstance(focal_tversky, Mapping):
+        raise ConfigError("training.loss.focal_tversky must be a mapping")
+    _positive_float(focal_tversky.get("alpha"), "training.loss.focal_tversky.alpha")
+    _positive_float(focal_tversky.get("beta"), "training.loss.focal_tversky.beta")
+    _nonnegative_float(focal_tversky.get("gamma"), "training.loss.focal_tversky.gamma")
     _positive_int(early_stopping.get("patience"), "training.early_stopping.patience")
     _positive_int(checkpoint.get("save_interval"), "training.checkpoint.save_interval")
     if not isinstance(checkpoint.get("save_best_only"), bool):

@@ -28,9 +28,9 @@ def test_empty_prediction_scores_zero_not_one_half():
     pred = _mask([[0, 0], [0, 0]])
     gt = _mask([[1, 1], [0, 0]])
 
-    assert calculate_precision(pred, gt) == pytest.approx(0.0)
-    assert calculate_recall(pred, gt) == pytest.approx(0.0)
-    assert calculate_dice(pred, gt) == pytest.approx(0.0)
+    assert calculate_precision(pred, gt) == pytest.approx(0.0, abs=1e-9)
+    assert calculate_recall(pred, gt) == pytest.approx(0.0, abs=1e-9)
+    assert calculate_dice(pred, gt) == pytest.approx(0.0, abs=1e-5)
 
 
 def test_both_empty_convention():

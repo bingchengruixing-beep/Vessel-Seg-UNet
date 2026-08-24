@@ -20,7 +20,7 @@ from src.config import ConfigError, load_config, resolve_checkpoint_dir, resolve
 from src.dataset import get_dataloaders
 from src.models import build_model
 from src.trainer import Trainer
-from src.training import build_criterion, build_optimizer, build_scheduler
+from src.training import build_criterion, build_optimizer, build_scheduler, set_seed
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -96,6 +96,7 @@ def _on_epoch_end(metrics):
 def run_training():
     try:
         config = _load_config()
+        set_seed(int(config["training"]["seed"]))
         with STATE_LOCK:
             training_state["total_epochs"] = config["training"]["epochs"]
             training_state["message"] = "准备数据和模型..."

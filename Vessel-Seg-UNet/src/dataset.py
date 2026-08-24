@@ -6,8 +6,10 @@
     VesselDataset.__getitem__ 输出:
         image: (1, H, W), float32, 值域 [0, 1]
         mask:  (1, H, W), float32, 值域 {0.0, 1.0}
+        skeleton: (1, H, W), float32, 值域 {0.0, 1.0} —— 仅 return_skeleton=True 时返回
 
     get_dataloaders(config) -> (DataLoader, DataLoader)
+    cl_dice_weight > 0 时 dataloader 自动输出 (image, mask, skeleton) 三元组。
 
 核心防错:
     - Mask 必须是 {0.0, 1.0} 的 FloatTensor，绝不是 0~255 的 ByteTensor
@@ -22,6 +24,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Optional, Tuple
 
 from src.config import resolve_data_path
+from src.skeleton import zhang_suen_thinning
 from src.transforms import get_train_transforms, get_val_transforms
 
 
@@ -45,10 +48,12 @@ class VesselDataset(Dataset):
         image_dir: str,
         mask_dir: str,
         transform=None,
+        return_skeleton: bool = False,
     ):
         self.image_dir = image_dir
         self.mask_dir = mask_dir
         self.transform = transform
+        self.return_skeleton = return_skeleton
 
         # 收集所有支持格式的图像文件名（仅保留在 mask_dir 中也存在的）
         self.filenames = sorted([
@@ -111,6 +116,12 @@ class VesselDataset(Dataset):
         # 强制 {0.0, 1.0} 二值化（防御性处理）
         mask = (mask > 0.5).float()
 
+        if self.return_skeleton:
+            # 骨架必须从增强后的掩膜计算，保证与 mask 空间一致
+            skeleton_np = zhang_suen_thinning(mask[0].cpu().numpy())
+            skeleton = torch.from_numpy(skeleton_np.astype(np.float32)).unsqueeze(0)
+            return image, mask, skeleton
+
         return image, mask
 
 
@@ -141,6 +152,11 @@ def get_dataloaders(
     train_transform = get_train_transforms(img_size, keep_aspect_ratio)
     val_transform = get_val_transforms(img_size, keep_aspect_ratio)
 
+    # clDice 监督需要数据集同时返回金标准骨架
+    return_skeleton = float(
+        config['training']['loss'].get('cl_dice_weight', 0.0)
+    ) > 0
+
     root = project_root or os.getcwd()
 
     # 构建数据集
@@ -148,11 +164,13 @@ def get_dataloaders(
         image_dir=str(resolve_data_path(data_cfg['train_image_dir'], root)),
         mask_dir=str(resolve_data_path(data_cfg['train_mask_dir'], root)),
         transform=train_transform,
+        return_skeleton=return_skeleton,
     )
     val_dataset = VesselDataset(
         image_dir=str(resolve_data_path(data_cfg['val_image_dir'], root)),
         mask_dir=str(resolve_data_path(data_cfg['val_mask_dir'], root)),
         transform=val_transform,
+        return_skeleton=return_skeleton,
     )
 
     # 构建 DataLoader

@@ -95,6 +95,12 @@ pytest -q
 
 ## 4. 后续模型优化路线（按优先级）
 
+> **2026-08-24 更新**：本轮已实施并完成全量对比实验，结果见
+> [experiments/results_summary.md](../experiments/results_summary.md)。
+> 核心结论：clDice 中心线监督将验证 Dice 从 0.6861 提升至 **0.7029**（+1.7pp，P/R 最均衡）；
+> Focal Tversky 按设计将 Recall 提升至 0.758；默认后处理参数对细血管数据集有害，需按数据重新标定。
+> 训练环境搭建与踩坑记录见 [ENVIRONMENT.md](ENVIRONMENT.md)。
+
 ### 4.1 损失函数（收益最大，先行）
 
 - **Focal Tversky Loss**：β 参数调大以惩罚细支血管漏检，比 BCE+Dice 对不平衡 + 细结构更友好；

@@ -14,7 +14,7 @@ from src.config import load_config, resolve_checkpoint_dir
 from src.dataset import get_dataloaders
 from src.models import build_model
 from src.trainer import Trainer
-from src.training import build_criterion, build_optimizer, build_scheduler
+from src.training import build_criterion, build_optimizer, build_scheduler, set_seed
 
 
 logging.basicConfig(
@@ -48,6 +48,7 @@ def main():
         if requested_device.type == "cuda" and not torch.cuda.is_available():
             parser.error("CUDA was requested but is not available")
     config = load_config(args.config)
+    set_seed(int(config["training"]["seed"]))
 
     logger.info("Vessel-Seg-UNet Training")
     logger.info("Config: %s", args.config)
