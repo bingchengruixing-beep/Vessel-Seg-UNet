@@ -106,6 +106,10 @@ class VesselDataset(Dataset):
         if mask is None:
             raise IOError(f"Failed to read mask: {mask_path}")
 
+        if mask.shape != image.shape:
+            # 个别标注文件与原图尺寸不同，先用最近邻插值对齐，避免改变掩膜类别值。
+            mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
         # 硬阈值二值化：>127 → 255, 其余 → 0
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
