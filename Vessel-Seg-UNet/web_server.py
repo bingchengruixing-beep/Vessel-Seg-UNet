@@ -43,6 +43,7 @@ Image.MAX_IMAGE_PIXELS = 16_000_000
 STATE_LOCK = threading.Lock()
 CONFIG_LOCK = threading.Lock()
 INFERENCE_LOCK = threading.Lock()
+DIRECTORY_DIALOG_LOCK = threading.Lock()
 training_state = {
     "running": False,
     "stop_requested": False,
@@ -225,6 +226,30 @@ def update_config():
         return jsonify(response)
     except ConfigError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
+
+
+@app.route("/api/select-directory", methods=["POST"])
+def select_directory():
+    """在运行 Web 服务的本机打开系统目录选择窗口。"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        with DIRECTORY_DIALOG_LOCK:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = filedialog.askdirectory(title="选择数据文件夹", mustexist=True)
+            root.destroy()
+        if not selected:
+            return jsonify({"success": False, "cancelled": True})
+        return jsonify({"success": True, "path": str(Path(selected).resolve())})
+    except (ImportError, RuntimeError, OSError) as exc:
+        logger.exception("打开系统目录选择窗口失败")
+        return jsonify({"success": False, "message": f"无法打开系统目录选择窗口：{exc}"}), 500
+    except Exception as exc:
+        logger.exception("目录选择失败")
+        return jsonify({"success": False, "message": str(exc)}), 500
 
 
 @app.route("/api/dataset/info", methods=["GET"])

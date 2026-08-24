@@ -119,19 +119,31 @@
                 <h3 class="card-title">📂 数据配置</h3>
                 <div class="form-group">
                     <label>训练图像路径</label>
-                    <input type="text" id="cfg-train-image-dir" placeholder="../dataset1/4s/normal">
+                    <div class="path-input-row">
+                        <input type="text" id="cfg-train-image-dir" placeholder="可手动输入或选择文件夹">
+                        <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-train-image-dir">选择文件夹</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>训练掩膜路径</label>
-                    <input type="text" id="cfg-train-mask-dir" placeholder="../dataset1/4s/masks">
+                    <div class="path-input-row">
+                        <input type="text" id="cfg-train-mask-dir" placeholder="可手动输入或选择文件夹">
+                        <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-train-mask-dir">选择文件夹</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>验证图像路径</label>
-                    <input type="text" id="cfg-val-image-dir" placeholder="../开源数据集；DIAS/val/images">
+                    <div class="path-input-row">
+                        <input type="text" id="cfg-val-image-dir" placeholder="可手动输入或选择文件夹">
+                        <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-val-image-dir">选择文件夹</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>验证掩膜路径</label>
-                    <input type="text" id="cfg-val-mask-dir" placeholder="../开源数据集；DIAS/val/masks">
+                    <div class="path-input-row">
+                        <input type="text" id="cfg-val-mask-dir" placeholder="可手动输入或选择文件夹">
+                        <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-val-mask-dir">选择文件夹</button>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">

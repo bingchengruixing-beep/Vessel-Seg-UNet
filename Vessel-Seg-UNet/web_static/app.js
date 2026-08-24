@@ -744,6 +744,34 @@
         }
     }
 
+    async function chooseDirectory(button) {
+        const target = document.getElementById(button.dataset.directoryTarget || '');
+        if (!target) return;
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '打开中...';
+        try {
+            const response = await fetch('/api/select-directory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.success) {
+                if (!data.cancelled) throw new Error(data.message || '选择文件夹失败');
+                return;
+            }
+            target.value = data.path;
+            target.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (error) {
+            console.error(error);
+            showToast(`选择文件夹失败: ${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = originalText;
+        }
+    }
+
     function readInferenceFile(file) {
         return new Promise((resolve, reject) => {
             if (!file.type.startsWith('image/')) {
@@ -1014,6 +1042,10 @@
             els.cfgBceWeight.addEventListener('input', () => updateRegionWeights('bce'));
             els.cfgDiceWeight.addEventListener('input', () => updateRegionWeights('dice'));
         }
+
+        document.querySelectorAll('.btn-choose-directory').forEach((button) => {
+            button.addEventListener('click', () => chooseDirectory(button));
+        });
         if (els.cfgClDiceWeight) {
             els.cfgClDiceWeight.addEventListener('input', () => updateRegionWeights('bce'));
         }
