@@ -25,6 +25,7 @@ def _resize_or_pad(img_size: int, keep_aspect_ratio: bool) -> list:
             min_height=img_size,
             min_width=img_size,
             border_mode=cv2.BORDER_CONSTANT,
+            value=0,  # 补黑边; albumentations 1.4.7 要求 BORDER_CONSTANT 显式给 value
         ),
     ]
 

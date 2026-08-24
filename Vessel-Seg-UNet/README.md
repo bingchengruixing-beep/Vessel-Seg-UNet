@@ -10,7 +10,8 @@
 
 - **U-Net Baseline**: 经典 4 层编码器-解码器 + Skip Connection
 - **Attention U-Net**: 注意力门控增强末梢细支血管捕捉
-- **BCE + Dice 混合损失**: 解决血管前景像素 <5%~10% 的极端类别不平衡
+- **多种损失**: BCE + Dice 混合、Focal Tversky、clDice 中心线拓扑监督(Zhang-Suen 骨架)
+- **现代训练策略**: warmup + 余弦退火、梯度裁剪、EMA 权重、固定随机种子
 - **AMP 混合精度训练**: 支持显存受限的游戏本环境
 - **完整后处理**: 连通域分析滤噪 + 孔洞填充
 
@@ -30,7 +31,8 @@ Vessel-Seg-UNet/
 │   │   ├── __init__.py         # [M2] 模型工厂
 │   │   ├── unet.py             # [M2] U-Net Baseline
 │   │   └── attention_unet.py   # [M2] Attention U-Net
-│   ├── losses.py               # [M3] BCE + Dice 损失函数
+│   ├── losses.py               # [M3] BCE+Dice / Focal Tversky / clDice 损失函数
+│   ├── skeleton.py             # Zhang-Suen 骨架化(clDice 监督用)
 │   ├── trainer.py              # [M3] 训练循环 (AMP + 早停)
 │   ├── training.py             # 损失、优化器与调度器工厂
 │   ├── config.py               # 配置归一化、校验与路径安全
@@ -77,7 +79,19 @@ dataset:
 python train.py
 # 或指定自定义配置
 python train.py --config configs/custom.yaml
+# 指定设备(默认自动)
+python train.py --device cuda:0
 ```
+
+### 3.1 全量对比实验
+
+`configs/experiments/` 提供 4 组对照配置(基线 / Focal Tversky / +clDice / Attention+组合),一键运行:
+
+```powershell
+powershell -File experiments/run_experiments.ps1
+```
+
+每组训练后自动做原始与后处理评估,日志在 `experiments/logs/`,结果在 `results/experiments/`。
 
 ### 4. 评估模型
 
@@ -114,6 +128,7 @@ mask = seg.predict('path/to/angiogram.png')
 |------|------|------|------|------|
 | Dataset 输出 image | `(1, H, W)` | float32 | `[0, 1]` |
 | Dataset 输出 mask | `(1, H, W)` | float32 | `{0.0, 1.0}` |
+| Dataset 输出 skeleton | `(1, H, W)` | float32 | `{0.0, 1.0}`,仅在 `cl_dice_weight > 0` 时返回 |
 | 模型输入 | `(B, 1, H, W)` | float32 | 任意 |
 | 模型输出 (logits) | `(B, 1, H, W)` | float32 | 任意 (未经 Sigmoid) |
 | 损失函数输入 targets | `(B, 1, H, W)` | float32 | `{0.0, 1.0}` |

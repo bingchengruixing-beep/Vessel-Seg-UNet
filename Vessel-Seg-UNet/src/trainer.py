@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -66,7 +67,18 @@ class Trainer:
         self.on_epoch_end = on_epoch_end
         self.should_stop = should_stop or (lambda: False)
 
-        self.scaler = GradScaler(enabled=self.use_amp)
+        self.scaler = GradScaler("cuda", enabled=self.use_amp)
+        self.grad_clip = float(train_cfg.get("grad_clip", 0.0))
+        self.ema_decay = float(train_cfg.get("ema_decay", 0.0))
+        self.use_ema = 0.0 < self.ema_decay < 1.0
+        self.ema_model = None
+        if self.use_ema:
+            self.ema_model = copy.deepcopy(self.model)
+            self.ema_model.eval()
+            for parameter in self.ema_model.parameters():
+                parameter.requires_grad_(False)
+            logger.info("EMA enabled (decay=%s)", self.ema_decay)
+        self.global_step = 0
         self.best_dice = float("-inf")
         self.epochs_no_improve = 0
         self.current_epoch = 0
@@ -84,18 +96,28 @@ class Trainer:
             desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
             leave=False,
         )
-        for images, masks in progress:
+        for batch in progress:
             if self._is_stop_requested():
                 return None
+            images, masks = batch[0], batch[1]
+            skeleton = batch[2] if len(batch) == 3 else None
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
+            if skeleton is not None:
+                skeleton = skeleton.to(self.device, non_blocking=True)
             self.optimizer.zero_grad(set_to_none=True)
-            with autocast(enabled=self.use_amp):
+            with autocast("cuda", enabled=self.use_amp):
                 logits = self.model(images)
-                loss = self.criterion(logits, masks)
+                loss = self.criterion(logits, masks, skeleton)
             self.scaler.scale(loss).backward()
+            if self.grad_clip > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            if self.use_ema:
+                self._update_ema()
+            self.global_step += 1
             total_loss += loss.item()
             num_batches += 1
             progress.set_postfix(loss=f"{loss.item():.4f}")
@@ -104,9 +126,19 @@ class Trainer:
         return total_loss / num_batches
 
     @torch.no_grad()
+    def _update_ema(self) -> None:
+        """指数滑动平均更新权重(带 warmup 衰减,验证与保存均使用 EMA 权重)。"""
+        decay = min(self.ema_decay, (1.0 + self.global_step) / (10.0 + self.global_step))
+        for ema_param, param in zip(self.ema_model.parameters(), self.model.parameters()):
+            ema_param.mul_(decay).add_(param, alpha=1.0 - decay)
+        for ema_buffer, buffer in zip(self.ema_model.buffers(), self.model.buffers()):
+            ema_buffer.copy_(buffer)
+
+    @torch.no_grad()
     def validate(self) -> Optional[Dict[str, float]]:
         """Evaluate one epoch with the same optional postprocessing as deployment."""
-        self.model.eval()
+        model = self.ema_model if self.use_ema else self.model
+        model.eval()
         total_loss = 0.0
         accumulator = MetricAccumulator()
         num_batches = 0
@@ -117,14 +149,18 @@ class Trainer:
             desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Val]",
             leave=False,
         )
-        for images, masks in progress:
+        for batch in progress:
             if self._is_stop_requested():
                 return None
+            images, masks = batch[0], batch[1]
+            skeleton = batch[2] if len(batch) == 3 else None
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
-            with autocast(enabled=self.use_amp):
-                logits = self.model(images)
-                loss = self.criterion(logits, masks)
+            if skeleton is not None:
+                skeleton = skeleton.to(self.device, non_blocking=True)
+            with autocast("cuda", enabled=self.use_amp):
+                logits = model(images)
+                loss = self.criterion(logits, masks, skeleton)
             predictions = predictions_from_logits(
                 logits,
                 threshold=evaluation_cfg["threshold"],
@@ -145,9 +181,11 @@ class Trainer:
 
     def _save_checkpoint(self, filename: str, metrics: Dict[str, float]) -> None:
         path = self.save_dir / filename
+        # 启用 EMA 时保存 EMA 权重作为部署权重，保证"验证的模型 = 保存的模型"。
+        state_model = self.ema_model if self.use_ema else self.model
         save_checkpoint(
             path,
-            model=self.model,
+            model=state_model,
             optimizer=self.optimizer,
             scheduler=self.scheduler,
             epoch=self.current_epoch + 1,

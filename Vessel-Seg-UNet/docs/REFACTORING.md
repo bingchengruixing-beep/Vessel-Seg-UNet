@@ -109,3 +109,20 @@ pytest -q
 - **Web 并发**：配置读写共用 `CONFIG_LOCK`；推理请求用 `INFERENCE_LOCK` 串行化，消除 `inference_cache` 与 `segmentor.threshold` 的竞态；训练进行中修改配置会返回提示（下次启动训练生效）。
 - **依赖清理**：移除未使用的 `scikit-image` 与 `scipy`。
 - **可测试性**：几何还原逻辑抽为 `inference.restore_original_geometry` 纯函数；新增 `tests/test_postprocess.py`、`tests/test_metrics.py`、`tests/test_losses.py` 并扩充几何还原测试。
+
+## 2026-08-23 模型优化批次
+
+本轮为模型优化 + 全量实验所做的功能扩展：
+
+- **Focal Tversky Loss**（`src/losses.py`）：`training.loss.name: FocalTverskyLoss`，`focal_tversky.{alpha,beta,gamma}` 可调，α>β 加重漏检惩罚；
+- **clDice 中心线监督**（`src/losses.py` + `src/skeleton.py`）：`training.loss.cl_dice_weight > 0` 时启用。数据集额外返回金标准骨架（Zhang-Suen 细化，纯 numpy 实现），预测侧用可微软骨架（max-pool 形态学近似）计算 clDice；
+- **训练策略升级**（`src/training.py` + `src/trainer.py`）：
+  - `training.seed` 固定随机种子（Python/NumPy/PyTorch/cuDNN）；
+  - `training.warmup_epochs` 线性 warmup + 余弦退火（SequentialLR）；
+  - `training.grad_clip` 梯度裁剪（AMP 下先 unscale 再 clip）；
+  - `training.ema_decay` 指数滑动平均权重，验证与保存均使用 EMA 权重，保证"验证的模型 = 部署的模型"；
+- **实验配置与一键脚本**：`configs/experiments/exp1~exp4.yaml` + `experiments/run_experiments.ps1`，依次训练 4 组对照并分别做原始/后处理评估；
+- 新增 `tests/test_skeleton.py` 与损失函数新用例（Focal Tversky / clDice / 组合损失）。
+- **环境适配**：`albumentations` 锁定 `<1.4.8`（1.4.8+ 依赖需要 C 编译器的 stringzilla）；`PadIfNeeded` 显式 `value=0`（1.4.7 pydantic 校验要求）；AMP 迁移到 `torch.amp` 新 API（torch≥2.3）。完整环境搭建与踩坑记录见 [ENVIRONMENT.md](ENVIRONMENT.md)。
+
+**兼容性**：所有新配置键均有默认值；旧检查点加载不受影响（`cl_dice_weight` 默认 0、损失签名向后兼容）。`train.py`、`evaluate.py`、`inference.py` 均支持 `--device`。
