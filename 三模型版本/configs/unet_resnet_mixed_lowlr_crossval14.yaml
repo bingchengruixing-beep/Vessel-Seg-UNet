@@ -1,0 +1,68 @@
+# 实验14（半跨源版）：U-Net + ImageNet 预训练 ResNet34 + 差分学习率
+# 数据划分口径（在实验13基础上只移动 DIAS 的 train 30 张）：
+#   - 训练集 = 本地 142（同实验13）+ DIAS-train 30 = 172
+#   - 验证集 = 本地 35（同实验13，不变）
+#   - 测试集 = DIAS-val 20（实验13是 DIAS 全 50）
+# 相对实验13的唯一变化：DIAS-train 30 从测试集挪回训练集。
+# 代码沿用实验12修复版（逐样本 DiceLoss / P-R eps / keep_aspect_ratio）。
+data:
+  train_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds2_4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/dias_train/normal"
+  train_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds1_5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/ds2_4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/train/dias_train/masks"
+  val_image_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_2~3s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_4s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_5~6s/normal"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds2_4s/normal"
+  val_mask_dir:
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_2~3s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_4s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds1_5~6s/masks"
+    - "E:/Unet模型训练/数据集-标注完成/跨源划分14/val/ds2_4s/masks"
+  test_image_dir: "E:/Unet模型训练/数据集-标注完成/跨源划分14/test/images"
+  test_mask_dir: "E:/Unet模型训练/数据集-标注完成/跨源划分14/test/masks"
+  img_size: 512
+  keep_aspect_ratio: true
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 2
+  epochs: 100
+  learning_rate: 1.0e-4
+  encoder_lr_scale: 0.1   # 编码器 LR = 1e-4 * 0.1 = 1e-5
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_unet_resnet_lowlr_crossval14"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true
