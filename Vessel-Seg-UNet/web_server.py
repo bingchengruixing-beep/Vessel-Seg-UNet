@@ -98,6 +98,14 @@ def _on_epoch_end(metrics):
         training_state["epoch"] = int(metrics["epoch"])
         training_state["history"].append(copy.deepcopy(metrics))
         training_state["message"] = "训练中"
+        log_path_value = training_state.get("log_path", "")
+    log_path = PROJECT_ROOT / log_path_value if log_path_value else None
+    _append_training_log(
+        log_path,
+        "Epoch [{epoch:.0f}/{total}] - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Dice: {dice:.4f}, IoU: {iou:.4f}".format(
+            total=training_state.get("total_epochs", 0), **metrics
+        ),
+    )
 
 
 def _append_training_log(log_path: Path | None, message: str) -> None:
@@ -143,13 +151,6 @@ def run_training():
             should_stop=_stop_requested,
         )
         result = trainer.run()
-        for metrics in training_state["history"]:
-            _append_training_log(
-                log_path,
-                "Epoch [{epoch:.0f}/{total}] - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Dice: {dice:.4f}, IoU: {iou:.4f}".format(
-                    total=config["training"]["epochs"], **metrics
-                ),
-            )
         with STATE_LOCK:
             training_state["best_dice"] = result["best_dice"]
             training_state["message"] = "训练已由用户终止" if result["stopped"] else "训练完成"
