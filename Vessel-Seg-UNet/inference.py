@@ -12,7 +12,7 @@ import torch
 from src.checkpoints import checkpoint_model_config, infer_legacy_model_name, load_checkpoint, load_model_state
 from src.config import normalize_config
 from src.models import build_model_from_config
-from src.prediction import predictions_from_logits
+from src.prediction import main_logits_from_output, postprocess_predictions
 from src.transforms import get_val_transforms
 
 
@@ -95,12 +95,11 @@ class VesselSegmentor:
             raise ValueError("predict_array expects a two-dimensional grayscale image")
         original_h, original_w = image.shape
         tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
-        predictions = predictions_from_logits(
-            self.model(tensor),
-            threshold=float(self.threshold),
-            apply_postprocess=bool(self.postprocess_config["enabled"]),
-            postprocess_config=self.postprocess_config,
-        )
+        with torch.inference_mode():
+            probabilities = torch.sigmoid(main_logits_from_output(self.model(tensor)))
+            predictions = (probabilities > float(self.threshold)).float()
+            if self.postprocess_config["enabled"]:
+                predictions = postprocess_predictions(predictions, self.postprocess_config)
         mask = predictions[0, 0].cpu().numpy().astype(np.uint8) * 255
         mask = self._restore_original_geometry(mask, original_h, original_w)
         return mask

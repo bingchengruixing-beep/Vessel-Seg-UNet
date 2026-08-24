@@ -1,17 +1,14 @@
-# All paths are relative to the project root unless they are absolute data paths.
 dataset:
-  img_size: 512
+  img_size: 1024
   num_workers: 0
   pin_memory: true
-  keep_aspect_ratio: true
+  keep_aspect_ratio: false
   augmentation:
-    # 弹性形变对细血管可能造成过度扰动，网页端可直接开关。
     elastic_transform: false
-  train_image_dir: data/train/images
-  train_mask_dir: data/train/masks
-  val_image_dir: data/val/images
-  val_mask_dir: data/val/masks
-
+  train_image_dir: ../../数据集-标注完成/统一训练集/normal
+  train_mask_dir: ../../数据集-标注完成/统一训练集/masks
+  val_image_dir: ../../数据集-标注完成/开源数据集；DIAS/val/images
+  val_mask_dir: ../../数据集-标注完成/开源数据集；DIAS/val/masks
 model:
   name: unet_baseline
   in_channels: 1
@@ -19,7 +16,6 @@ model:
   encoder_name: resnet34
   pretrained: true
   deep_supervision: true
-
 training:
   batch_size: 1
   epochs: 100
@@ -28,30 +24,27 @@ training:
   optimizer: adamw
   scheduler: cosine
   use_amp: true
-  deep_supervision_weights: [0.3, 0.2]
   loss:
     name: BCEDiceLoss
     bce_weight: 0.5
     dice_weight: 0.5
-    cldice_weight: 0.15
-    dice_smooth: 0.000001
+    cldice_weight: 0
+    dice_smooth: 1.0e-06
     skeleton_iterations: 5
+  deep_supervision_weights:
+  - 0.3
+  - 0.2
   early_stopping:
     patience: 10
   checkpoint:
-    # This directory is intentionally restricted to a project-relative location.
     save_dir: checkpoints
     save_best_only: true
     save_interval: 10
-
 evaluation:
   threshold: 0.5
-  # Enable this to measure the exact masks produced in deployment.
   apply_postprocess: false
-
 inference:
   threshold: 0.5
-  # null inherits dataset.img_size, which avoids a silent training/inference mismatch.
   img_size: null
   postprocess:
     enabled: true

@@ -22,7 +22,7 @@ from src.dataset import get_dataloaders
 from src.dataset import VesselDataset
 from src.metrics import calculate_dice, calculate_iou, calculate_precision, calculate_recall
 from src.models import build_model_from_config
-from src.prediction import main_logits_from_output
+from src.prediction import main_logits_from_output, postprocess_predictions
 from src.trainer import Trainer
 from src.training import build_criterion, build_optimizer, build_scheduler
 from src.transforms import get_val_transforms
@@ -340,6 +340,7 @@ def _run_inference():
             })
         segmentor = inference_cache["segmentor"]
         segmentor.threshold = threshold
+        _apply_processing_options(segmentor, payload)
         mask = segmentor.predict_array(np.asarray(image))
         buffer = BytesIO()
         Image.fromarray(mask).save(buffer, format="PNG")
@@ -368,6 +369,28 @@ def _get_cached_segmentor(checkpoint_name: str) -> VesselSegmentor:
     return inference_cache["segmentor"]
 
 
+def _apply_processing_options(segmentor: VesselSegmentor, payload: dict) -> None:
+    config = _load_config()["inference"]["postprocess"]
+    segmentor.postprocess_config = dict(config)
+    mode = payload.get("processing", "config")
+    if mode == "off":
+        segmentor.postprocess_config["enabled"] = False
+    elif mode == "custom":
+        min_component_size = int(payload.get("min_component_size", config["min_component_size"]))
+        max_hole_size = int(payload.get("max_hole_size", config["max_hole_size"]))
+        morph_close_kernel = int(payload.get("morph_close_kernel", config["morph_close_kernel"]))
+        if min_component_size < 0 or max_hole_size < 0 or morph_close_kernel < 1 or morph_close_kernel % 2 == 0:
+            raise ValueError("后处理参数无效：连通域和孔洞不能为负，闭运算核必须为正奇数")
+        segmentor.postprocess_config.update({
+            "enabled": True,
+            "min_component_size": min_component_size,
+            "max_hole_size": max_hole_size,
+            "morph_close_kernel": morph_close_kernel,
+        })
+    elif mode != "config":
+        raise ValueError("未知的后处理方式")
+
+
 @app.route("/api/inference-batch", methods=["POST"])
 def run_batch_inference():
     """对网页上传的多张图像使用同一检查点批量推理。"""
@@ -383,6 +406,7 @@ def run_batch_inference():
                 raise ValueError("threshold must be between 0 and 1")
             segmentor = _get_cached_segmentor(checkpoint_name)
             segmentor.threshold = threshold
+            _apply_processing_options(segmentor, payload)
             results = []
             for item in images:
                 if not isinstance(item, dict) or "image_base64" not in item:
@@ -435,6 +459,7 @@ def threshold_scan():
         )
         segmentor = _get_cached_segmentor(checkpoint_name)
         segmentor.model.eval()
+        _apply_processing_options(segmentor, payload)
         totals = {
             threshold: {"dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
             for threshold in thresholds
@@ -450,6 +475,8 @@ def threshold_scan():
                     target = masks[index:index + 1]
                     for threshold in thresholds:
                         prediction = (probability > threshold).float()
+                        if segmentor.postprocess_config["enabled"]:
+                            prediction = postprocess_predictions(prediction, segmentor.postprocess_config)
                         totals[threshold]["dice"] += calculate_dice(prediction, target)
                         totals[threshold]["iou"] += calculate_iou(prediction, target)
                         totals[threshold]["precision"] += calculate_precision(prediction, target)

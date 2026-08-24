@@ -82,6 +82,10 @@
         infCheckpoint: document.getElementById('inference-checkpoint'),
         infThreshold: document.getElementById('inference-threshold'),
         infThresholdValue: document.getElementById('inference-threshold-value'),
+        infProcessing: document.getElementById('inference-processing'),
+        infMinComponent: document.getElementById('inference-min-component'),
+        infMaxHole: document.getElementById('inference-max-hole'),
+        infMorphKernel: document.getElementById('inference-morph-kernel'),
         btnRunInference: document.getElementById('btn-run-inference'),
         thresholdScanValues: document.getElementById('threshold-scan-values'),
         btnThresholdScan: document.getElementById('btn-threshold-scan'),
@@ -433,10 +437,12 @@
                 }
             },
             evaluation: state.config?.evaluation ?? { threshold: 0.5, apply_postprocess: false },
-            inference: state.config?.inference ?? {
+            inference: {
+                ...(state.config?.inference ?? {
                 threshold: 0.5,
                 img_size: null,
                 postprocess: { enabled: true, min_component_size: 50, max_hole_size: 100, morph_close_kernel: 3 }
+                })
             }
         };
     }
@@ -767,6 +773,12 @@
         }
         
         const threshold = els.infThreshold ? parseFloat(els.infThreshold.value) : 0.5;
+        const processingOptions = getProcessingOptions();
+        const bodyOptions = {
+            min_component_size: Number(els.infMinComponent?.value || 50),
+            max_hole_size: Number(els.infMaxHole?.value || 100),
+            morph_close_kernel: Number(els.infMorphKernel?.value || 3)
+        };
 
         if (els.btnRunInference) {
             els.btnRunInference.disabled = true;
@@ -778,11 +790,15 @@
             const body = state.inferenceFiles.length > 1 ? {
                 images: state.inferenceFiles.map(item => ({ name: item.name, image_base64: item.image_base64 })),
                 checkpoint: cp,
-                threshold: threshold
+                threshold: threshold,
+                ...processingOptions,
+                ...bodyOptions
             } : {
                 image_base64: state.inferenceImageBase64,
                 checkpoint: cp,
-                threshold: threshold
+                threshold: threshold,
+                ...processingOptions,
+                ...bodyOptions
             };
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -817,6 +833,10 @@
                 els.btnRunInference.textContent = '开始推理';
             }
         }
+    }
+
+    function getProcessingOptions() {
+        return { processing: els.infProcessing?.value || 'config' };
     }
 
     function renderBatchResults(results) {
@@ -891,7 +911,14 @@
             const res = await fetch('/api/threshold-scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ checkpoint, thresholds })
+                body: JSON.stringify({
+                    checkpoint,
+                    thresholds,
+                    ...getProcessingOptions(),
+                    min_component_size: Number(els.infMinComponent?.value || 50),
+                    max_hole_size: Number(els.infMaxHole?.value || 100),
+                    morph_close_kernel: Number(els.infMorphKernel?.value || 3)
+                })
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || '阈值扫描失败');
