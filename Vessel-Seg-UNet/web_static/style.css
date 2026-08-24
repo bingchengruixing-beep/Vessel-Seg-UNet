@@ -490,6 +490,11 @@ input:focus, select:focus {
     margin-bottom: 1rem;
 }
 .infer-controls .form-group { min-width: 180px; flex: 1; margin-bottom: 0; }
+.threshold-scan-panel { margin-bottom: 1rem; }
+.scan-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.threshold-best { color: var(--success); font-family: var(--font-mono); margin-top: .75rem; }
+.threshold-table-wrap { overflow-x: auto; margin-top: .75rem; }
+.threshold-table td, .threshold-table th { padding: .45rem .6rem; text-align: right; }
 
 .infer-drop-zone {
     border: 2px dashed var(--border);

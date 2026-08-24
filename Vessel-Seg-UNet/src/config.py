@@ -15,6 +15,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "num_workers": 0,
         "pin_memory": True,
         "keep_aspect_ratio": True,
+        "augmentation": {
+            "elastic_transform": False,
+        },
         "train_image_dir": "data/train/images",
         "train_mask_dir": "data/train/masks",
         "val_image_dir": "data/val/images",
@@ -24,6 +27,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "name": "unet_baseline",
         "in_channels": 1,
         "out_channels": 1,
+        "encoder_name": "resnet34",
+        "pretrained": True,
+        "deep_supervision": True,
     },
     "training": {
         "batch_size": 1,
@@ -37,8 +43,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "name": "BCEDiceLoss",
             "bce_weight": 0.5,
             "dice_weight": 0.5,
+            "cldice_weight": 0.0,
             "dice_smooth": 1e-6,
+            "skeleton_iterations": 5,
         },
+        "deep_supervision_weights": [0.3, 0.2],
         "early_stopping": {"patience": 10},
         "checkpoint": {
             "save_dir": "checkpoints",
@@ -148,10 +157,18 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _nonnegative_int(dataset.get("num_workers"), "dataset.num_workers")
     if not isinstance(dataset.get("keep_aspect_ratio"), bool):
         raise ConfigError("dataset.keep_aspect_ratio must be boolean")
+    augmentation = dataset.get("augmentation")
+    if not isinstance(augmentation, Mapping) or not isinstance(augmentation.get("elastic_transform"), bool):
+        raise ConfigError("dataset.augmentation.elastic_transform must be boolean")
     _positive_int(model.get("in_channels"), "model.in_channels")
     _positive_int(model.get("out_channels"), "model.out_channels")
-    if model.get("name") not in {"unet_baseline", "attention_unet"}:
-        raise ConfigError("model.name must be 'unet_baseline' or 'attention_unet'")
+    if model.get("name") not in {"unet_baseline", "attention_unet", "unet_resnet", "resunet_aspp"}:
+        raise ConfigError("model.name must be unet_baseline, attention_unet, unet_resnet, or resunet_aspp")
+    if model.get("name") == "unet_resnet" and model.get("encoder_name") not in {"resnet34", "resnet50"}:
+        raise ConfigError("model.encoder_name must be resnet34 or resnet50")
+    for field in ("pretrained", "deep_supervision"):
+        if not isinstance(model.get(field), bool):
+            raise ConfigError(f"model.{field} must be boolean")
 
     _positive_int(training.get("batch_size"), "training.batch_size")
     _positive_int(training.get("epochs"), "training.epochs")
@@ -173,6 +190,13 @@ def validate_config(config: Mapping[str, Any]) -> None:
     if bce_weight + dice_weight <= 0:
         raise ConfigError("At least one loss weight must be positive")
     _positive_float(loss.get("dice_smooth"), "training.loss.dice_smooth")
+    _nonnegative_float(loss.get("cldice_weight", 0.0), "training.loss.cldice_weight")
+    _positive_int(loss.get("skeleton_iterations", 5), "training.loss.skeleton_iterations")
+    deep_supervision_weights = training.get("deep_supervision_weights", [0.3, 0.2])
+    if not isinstance(deep_supervision_weights, list) or any(
+        not isinstance(value, (int, float)) or float(value) < 0 for value in deep_supervision_weights
+    ):
+        raise ConfigError("training.deep_supervision_weights must be a list of non-negative numbers")
     _positive_int(early_stopping.get("patience"), "training.early_stopping.patience")
     _positive_int(checkpoint.get("save_interval"), "training.checkpoint.save_interval")
     if not isinstance(checkpoint.get("save_best_only"), bool):

@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from src.checkpoints import save_checkpoint
 from src.metrics import MetricAccumulator
-from src.prediction import predictions_from_logits
+from src.prediction import main_logits_from_output, predictions_from_logits
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,18 @@ class Trainer:
         self.best_dice = float("-inf")
         self.epochs_no_improve = 0
         self.current_epoch = 0
+        self.deep_supervision_weights = tuple(
+            float(value) for value in train_cfg.get("deep_supervision_weights", [0.3, 0.2])
+        )
+
+    def _loss_from_output(self, output, masks):
+        """主输出使用完整损失，深监督辅助输出按配置加权。"""
+        if not isinstance(output, (tuple, list)):
+            return self.criterion(output, masks)
+        total = self.criterion(output[0], masks)
+        for weight, auxiliary in zip(self.deep_supervision_weights, output[1:]):
+            total = total + weight * self.criterion(auxiliary, masks)
+        return total
 
     def _is_stop_requested(self) -> bool:
         return bool(self.should_stop())
@@ -91,8 +103,8 @@ class Trainer:
             masks = masks.to(self.device, non_blocking=True)
             self.optimizer.zero_grad(set_to_none=True)
             with autocast(enabled=self.use_amp):
-                logits = self.model(images)
-                loss = self.criterion(logits, masks)
+                outputs = self.model(images)
+                loss = self._loss_from_output(outputs, masks)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -123,8 +135,9 @@ class Trainer:
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
             with autocast(enabled=self.use_amp):
-                logits = self.model(images)
-                loss = self.criterion(logits, masks)
+                outputs = self.model(images)
+                logits = main_logits_from_output(outputs)
+                loss = self._loss_from_output(outputs, masks)
             predictions = predictions_from_logits(
                 logits,
                 threshold=evaluation_cfg["threshold"],

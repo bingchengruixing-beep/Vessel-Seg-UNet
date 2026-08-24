@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 import torch
 
-from src.checkpoints import checkpoint_model_config, load_checkpoint, load_model_state
+from src.checkpoints import checkpoint_model_config, infer_legacy_model_name, load_checkpoint, load_model_state
 from src.config import normalize_config
-from src.models import build_model
+from src.models import build_model_from_config
 from src.prediction import predictions_from_logits
 from src.transforms import get_val_transforms
 
@@ -57,14 +57,15 @@ class VesselSegmentor:
         self.checkpoint = load_checkpoint(model_path, map_location=self.device)
         saved_config = self.checkpoint.get("config")
         self.config = normalize_config(saved_config if isinstance(saved_config, dict) else config)
+        if not isinstance(saved_config, dict):
+            detected_name = infer_legacy_model_name(self.checkpoint)
+            if detected_name:
+                self.config["model"]["name"] = detected_name
+                self.config["model"]["pretrained"] = False
         model_cfg = checkpoint_model_config(self.checkpoint, self.config)
         if model_name is not None:
             model_cfg["name"] = model_name
-        self.model = build_model(
-            model_cfg["name"],
-            in_channels=model_cfg["in_channels"],
-            out_channels=model_cfg["out_channels"],
-        )
+        self.model = build_model_from_config(model_cfg)
         load_model_state(self.model, self.checkpoint)
         self.model.to(self.device).eval()
 

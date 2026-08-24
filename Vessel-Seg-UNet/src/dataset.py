@@ -138,7 +138,12 @@ def get_dataloaders(
 
     # 构建增强管线
     keep_aspect_ratio = data_cfg.get('keep_aspect_ratio', True)
-    train_transform = get_train_transforms(img_size, keep_aspect_ratio)
+    augmentation_cfg = data_cfg.get('augmentation', {})
+    train_transform = get_train_transforms(
+        img_size,
+        keep_aspect_ratio,
+        elastic_transform=bool(augmentation_cfg.get('elastic_transform', False)),
+    )
     val_transform = get_val_transforms(img_size, keep_aspect_ratio)
 
     root = project_root or os.getcwd()

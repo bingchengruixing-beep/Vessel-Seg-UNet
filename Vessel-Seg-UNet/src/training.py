@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import torch
 
-from src.losses import BCEDiceLoss
+from src.losses import BCEDiceClDiceLoss, BCEDiceLoss
 
 
-def build_criterion(config: dict) -> BCEDiceLoss:
+def build_criterion(config: dict) -> torch.nn.Module:
     loss_cfg = config["training"]["loss"]
+    if config["model"]["name"] == "resunet_aspp":
+        return BCEDiceClDiceLoss(
+            bce_weight=loss_cfg["bce_weight"],
+            dice_weight=loss_cfg["dice_weight"],
+            cldice_weight=loss_cfg.get("cldice_weight", 0.0),
+            dice_smooth=loss_cfg["dice_smooth"],
+            skeleton_iterations=loss_cfg.get("skeleton_iterations", 5),
+        )
     return BCEDiceLoss(
         bce_weight=loss_cfg["bce_weight"],
         dice_weight=loss_cfg["dice_weight"],

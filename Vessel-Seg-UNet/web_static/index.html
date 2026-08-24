@@ -143,6 +143,13 @@
                         <input type="number" id="cfg-num-workers" value="0" min="0" max="16">
                     </div>
                 </div>
+                <div class="form-group switch-row">
+                    <label>弹性形变增强</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-elastic-transform">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
             </div>
 
             <!-- 模型配置 -->
@@ -153,6 +160,15 @@
                     <select id="cfg-model-name">
                         <option value="unet_baseline">U-Net Baseline</option>
                         <option value="attention_unet">Attention U-Net</option>
+                        <option value="unet_resnet">U-Net + ResNet 编码器</option>
+                        <option value="resunet_aspp">ResUNet-ASPP + U-Net++ 深监督</option>
+                    </select>
+                </div>
+                <div class="form-group" id="cfg-encoder-group">
+                    <label>ResNet 编码器</label>
+                    <select id="cfg-encoder-name">
+                        <option value="resnet34">ResNet34</option>
+                        <option value="resnet50">ResNet50</option>
                     </select>
                 </div>
                 <div class="form-row">
@@ -164,6 +180,20 @@
                         <label>输出通道数</label>
                         <input type="number" id="cfg-out-channels" value="1" min="1" max="4">
                     </div>
+                </div>
+                <div class="form-group switch-row">
+                    <label>ImageNet 预训练编码器</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-pretrained" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group switch-row" id="cfg-deep-supervision-group">
+                    <label>U-Net++ 深监督</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-deep-supervision" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
 
@@ -234,7 +264,14 @@
                     </div>
                     <input type="range" id="cfg-dice-weight" class="range-input" min="0" max="1" step="0.05" value="0.5">
                 </div>
-                <p class="hint-text">两项权重之和应为 1.0（自动联动）</p>
+                <div class="form-group" id="cfg-cldice-group" style="display:none">
+                    <div class="slider-label-row">
+                        <label>clDice 权重</label>
+                        <span class="mono" id="cfg-cldice-weight-value">0.15</span>
+                    </div>
+                    <input type="range" id="cfg-cldice-weight" class="range-input" min="0" max="1" step="0.05" value="0.15">
+                </div>
+                <p class="hint-text" id="cfg-loss-weight-hint">BCE 与 Dice 权重之和为 1.0（自动联动）</p>
             </div>
 
             <!-- 早停与保存 -->
@@ -287,14 +324,36 @@
 
         <!-- Drop zone -->
         <div class="infer-drop-zone glass-panel" id="inference-dropzone">
-            <input type="file" id="inference-file-input" accept="image/*" style="display:none">
+            <input type="file" id="inference-file-input" accept="image/*" multiple style="display:none">
             <div class="drop-icon">📁</div>
             <p>拖拽图像至此，或<button class="link-btn" onclick="document.getElementById('inference-file-input').click()">点击上传</button></p>
             <p class="hint-text">支持 .png, .jpg, .bmp, .tif</p>
         </div>
 
+        <div class="threshold-scan-panel glass-panel">
+            <div class="scan-heading">
+                <div>
+                    <h3 class="card-title">验证集阈值扫描</h3>
+                    <p class="hint-text">使用当前验证集和所选权重比较多个阈值，选择 Dice 最高者</p>
+                </div>
+                <button class="btn btn-secondary" id="btn-threshold-scan">📊 批量测试阈值</button>
+            </div>
+            <div class="form-group">
+                <label for="threshold-scan-values">阈值列表（逗号分隔）</label>
+                <input type="text" id="threshold-scan-values" value="0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70">
+            </div>
+            <div id="threshold-scan-status" class="hint-text">尚未开始扫描</div>
+            <div class="threshold-best" id="threshold-scan-best" style="display:none"></div>
+            <div class="threshold-table-wrap" id="threshold-scan-table-wrap" style="display:none">
+                <table class="ckpt-table threshold-table">
+                    <thead><tr><th>阈值</th><th>Dice</th><th>IoU</th><th>Precision</th><th>Recall</th></tr></thead>
+                    <tbody id="threshold-scan-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Side-by-side results -->
-        <div class="infer-results-row">
+        <div class="infer-results-row" id="inference-results-row">
             <div class="infer-result-box glass-panel">
                 <div class="result-title">原始图像</div>
                 <div class="result-img-wrap">
@@ -309,6 +368,10 @@
                     <div class="img-placeholder" id="inf-result-placeholder">执行推理后显示</div>
                 </div>
             </div>
+        </div>
+        <div class="config-card glass-panel" id="batch-inference-results" style="display:none">
+            <h3 class="card-title">批量推理结果</h3>
+            <div id="batch-inference-grid" class="infer-results-row"></div>
         </div>
     </section>
 

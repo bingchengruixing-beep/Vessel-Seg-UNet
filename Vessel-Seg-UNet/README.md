@@ -10,6 +10,8 @@
 
 - **U-Net Baseline**: 经典 4 层编码器-解码器 + Skip Connection
 - **Attention U-Net**: 注意力门控增强末梢细支血管捕捉
+- **U-Net + ResNet 编码器**: 成员B的 ImageNet 预训练 ResNet34/50 编码器
+- **ResUNet-ASPP**: ResNet34 + ASPP + U-Net++ 风格解码器，可选深监督和 clDice
 - **BCE + Dice 混合损失**: 解决血管前景像素 <5%~10% 的极端类别不平衡
 - **AMP 混合精度训练**: 支持显存受限的游戏本环境
 - **完整后处理**: 连通域分析滤噪 + 孔洞填充
@@ -30,6 +32,8 @@ Vessel-Seg-UNet/
 │   │   ├── __init__.py         # [M2] 模型工厂
 │   │   ├── unet.py             # [M2] U-Net Baseline
 │   │   └── attention_unet.py   # [M2] Attention U-Net
+│   │   ├── unet_resnet.py      # [M2] ImageNet ResNet 编码器 U-Net
+│   │   └── resunet_aspp.py     # [M2] ASPP + U-Net++ 深监督
 │   ├── losses.py               # [M3] BCE + Dice 损失函数
 │   ├── trainer.py              # [M3] 训练循环 (AMP + 早停)
 │   ├── training.py             # 损失、优化器与调度器工厂
@@ -98,6 +102,14 @@ python web_server.py
 ```
 
 打开 `http://127.0.0.1:5001`。该服务仅供本机可信用户使用，请勿暴露到局域网或公网。
+
+网页训练配置支持模型切换、ImageNet 编码器开关、ResUNet-ASPP 专用 clDice 权重、U-Net++ 深监督、弹性形变增强开关和相对路径配置。每次训练会在 `logs/` 生成包含完整参数与轮次结果的 UTF-8 日志；推理页支持多图批量推理及验证集阈值扫描。
+
+### 本次更新
+
+- 新增成员B的 `unet_resnet` 模型和 ResUNet-ASPP 模型注册。
+- 新增 BCE + Dice + clDice 损失，深监督辅助输出仅参与训练损失，验证和推理使用主输出。
+- Web 端新增上述模型配置、弹性形变开关、训练日志、阈值批量扫描和多图推理。
 
 或在代码中使用：
 

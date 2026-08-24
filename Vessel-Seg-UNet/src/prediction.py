@@ -40,15 +40,26 @@ def postprocess_predictions(
     return torch.from_numpy(np.stack(processed)[:, None]).to(device)
 
 
+def main_logits_from_output(output: torch.Tensor | tuple | list) -> torch.Tensor:
+    """兼容普通模型和深监督模型，只取主输出用于指标与推理。"""
+    if isinstance(output, (tuple, list)):
+        if not output:
+            raise ValueError("Model output sequence is empty")
+        output = output[0]
+    if not isinstance(output, torch.Tensor):
+        raise TypeError("Model output must be a tensor or a non-empty sequence")
+    return output
+
+
 def predictions_from_logits(
-    logits: torch.Tensor,
+    logits: torch.Tensor | tuple | list,
     *,
     threshold: float = 0.5,
     apply_postprocess: bool = False,
     postprocess_config: Mapping[str, int | bool] | None = None,
 ) -> torch.Tensor:
     """Produce binary masks using the same optional postprocessing as inference."""
-    predictions = binarize_logits(logits, threshold)
+    predictions = binarize_logits(main_logits_from_output(logits), threshold)
     if apply_postprocess:
         if postprocess_config is None:
             raise ValueError("postprocess_config is required when apply_postprocess=True")

@@ -32,12 +32,13 @@ def _resize_or_pad(img_size: int, keep_aspect_ratio: bool) -> list:
 def get_train_transforms(
     img_size: int = 512,
     keep_aspect_ratio: bool = True,
+    elastic_transform: bool = False,
 ) -> A.Compose:
     """
     返回训练阶段的 Albumentations 增强管线。
 
     包含:
-        - 几何变换: 随机翻转、旋转(±30°)、弹性形变
+        - 几何变换: 随机翻转、旋转(±30°)，可选弹性形变
         - 对比度/亮度扰动: CLAHE、RandomBrightnessContrast
         - 尺寸统一: 等比例缩放 + 补边（可选退回强制 Resize）
         - 归一化: [0, 255] → [0, 1]
@@ -50,16 +51,16 @@ def get_train_transforms(
     Returns:
         Albumentations Compose 对象
     """
-    return A.Compose([
+    transforms = [
         *_resize_or_pad(img_size, keep_aspect_ratio),
         # ── 几何变换 ──
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.Rotate(limit=30, border_mode=0, p=0.5),
-        A.ElasticTransform(
-            alpha=120, sigma=6,
-            border_mode=0, p=0.3
-        ),
+    ]
+    if elastic_transform:
+        transforms.append(A.ElasticTransform(alpha=120, sigma=6, border_mode=0, p=0.3))
+    transforms.extend([
         # ── 对比度/亮度扰动 ──
         A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
         A.RandomBrightnessContrast(
@@ -68,7 +69,8 @@ def get_train_transforms(
         # ── 归一化 + Tensor ──
         A.Normalize(mean=[0.0], std=[1.0], max_pixel_value=255.0),
         ToTensorV2(),
-    ], is_check_shapes=False)
+    ])
+    return A.Compose(transforms, is_check_shapes=False)
 
 
 def get_val_transforms(
