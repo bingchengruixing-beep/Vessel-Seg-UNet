@@ -10,12 +10,12 @@ dataset:
     size: 640
     foreground_probability: 0.7
     min_foreground_ratio: 0.002
-  train_image_dir: data/train/images
-  train_mask_dir: data/train/masks
-  val_image_dir: data/val/images
-  val_mask_dir: data/val/masks
+  train_image_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\normal
+  train_mask_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\masks
+  val_image_dir: D:\STUDYPOWER\1大创\数据集-标注完成\开源数据集；DIAS\val\images
+  val_mask_dir: D:\STUDYPOWER\1大创\数据集-标注完成\开源数据集；DIAS\val\masks
 model:
-  name: unet_baseline
+  name: attention_unet
   in_channels: 1
   out_channels: 1
   encoder_name: resnet34
@@ -38,8 +38,8 @@ training:
     bce_weight: 0.5
     dice_weight: 0.5
     dice_smooth: 1.0e-06
-    cl_dice_weight: 0.0
-    cldice_weight: 0.0
+    cl_dice_weight: 0
+    cldice_weight: 0
     skeleton_iterations: 5
     focal_tversky:
       alpha: 0.7
@@ -51,6 +51,9 @@ training:
     save_dir: checkpoints
     save_best_only: true
     save_interval: 10
+  deep_supervision_weights:
+  - 0.3
+  - 0.2
 evaluation:
   threshold: 0.5
   apply_postprocess: false

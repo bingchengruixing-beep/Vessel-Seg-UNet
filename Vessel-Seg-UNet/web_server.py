@@ -266,6 +266,7 @@ def dataset_info():
     return jsonify({
         "train": {"count": image_count(dataset_cfg["train_image_dir"]), "path": dataset_cfg["train_image_dir"]},
         "val": {"count": image_count(dataset_cfg["val_image_dir"]), "path": dataset_cfg["val_image_dir"]},
+        "split_strategy": "按当前训练/验证路径使用，不自动重分层",
     })
 
 

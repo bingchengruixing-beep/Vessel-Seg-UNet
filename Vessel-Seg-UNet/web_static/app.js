@@ -108,7 +108,8 @@
         dsTrainCount: document.getElementById('dataset-train-count'),
         dsValCount: document.getElementById('dataset-val-count'),
         dsTrainPath: document.getElementById('dataset-train-path'),
-        dsValPath: document.getElementById('dataset-val-path')
+        dsValPath: document.getElementById('dataset-val-path'),
+        dsSplitStrategy: document.getElementById('dataset-split-strategy')
     };
 
     // 1. Toast Notification System
@@ -253,6 +254,9 @@
             if (els.dsValCount) els.dsValCount.textContent = data.val.count;
             if (els.dsTrainPath) els.dsTrainPath.textContent = data.train.path;
             if (els.dsValPath) els.dsValPath.textContent = data.val.path;
+            if (els.dsSplitStrategy) {
+                els.dsSplitStrategy.textContent = data.split_strategy || '按当前训练/验证路径使用，不自动重分层';
+            }
         } catch (e) {
             console.error(e);
         }
