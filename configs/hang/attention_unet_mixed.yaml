@@ -1,0 +1,50 @@
+# 实验9：Attention U-Net + 混合训练（177 本地 + 30 DIAS = 207 张），batch_size=2 适配 4GB 显存
+data:
+  train_image_dir:
+    - "C:/Users/13091/Desktop/数据集/dataset1/2~3s/normal"
+    - "C:/Users/13091/Desktop/数据集/dataset1/4s/normal"
+    - "C:/Users/13091/Desktop/数据集/dataset1/5~6s/normal"
+    - "C:/Users/13091/Desktop/数据集/dataset2（4s）/normal"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/images"
+  train_mask_dir:
+    - "C:/Users/13091/Desktop/数据集/dataset1/2~3s/masks"
+    - "C:/Users/13091/Desktop/数据集/dataset1/4s/masks"
+    - "C:/Users/13091/Desktop/数据集/dataset1/5~6s/masks"
+    - "C:/Users/13091/Desktop/数据集/dataset2（4s）/masks"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/masks"
+  val_image_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/images"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "attention_unet"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 2
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_attention_mixed"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true

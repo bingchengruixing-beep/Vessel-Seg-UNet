@@ -1,0 +1,51 @@
+# ══════════════════════════════════════════════════════════════
+# 实验 5：unet_resnet（ImageNet 预训练 ResNet34 编码器），数据 = own_train 142 / own_val 35
+# 与实验 1 仅模型不同（unet_baseline → unet_resnet），考察迁移学习的影响
+# ══════════════════════════════════════════════════════════════
+
+# ── 数据路径 ──────────────────────────────────────────────────
+data:
+  train_image_dir: "C:/Users/13091/Desktop/数据集/own_split/own_train/normal"
+  train_mask_dir: "C:/Users/13091/Desktop/数据集/own_split/own_train/masks"
+  val_image_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/normal"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+# ── 模型配置 ──────────────────────────────────────────────────
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
+
+# ── 训练配置 ──────────────────────────────────────────────────
+training:
+  batch_size: 4
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+# ── 损失函数 ──────────────────────────────────────────────────
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+# ── 早停与模型保存（新目录）──────────────────────────────────
+checkpoint:
+  save_dir: "checkpoints_own_resnet"
+  early_stopping_patience: 15
+  save_best_only: true
+
+# ── 后处理 ────────────────────────────────────────────────────
+postprocess:
+  min_component_size: 50
+
+# ── 可视化 ────────────────────────────────────────────────────
+visualization:
+  output_dir: "results"
+  save_overlay: true

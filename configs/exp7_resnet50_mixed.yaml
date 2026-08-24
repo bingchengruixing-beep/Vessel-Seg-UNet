@@ -1,0 +1,56 @@
+# ══════════════════════════════════════════════════════════════
+# 实验 7：unet_resnet(ResNet50 编码器)，训练集 = own_train 142 + DIAS-train 30 = 172
+# 验证集 = own_val(35)。对比实验 6（resnet34），考察更深编码器的影响
+# ══════════════════════════════════════════════════════════════
+
+# ── 数据路径（train 为多目录合并）─────────────────────────────
+data:
+  train_image_dir:
+    - "C:/Users/13091/Desktop/数据集/own_split/own_train/normal"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/images"
+  train_mask_dir:
+    - "C:/Users/13091/Desktop/数据集/own_split/own_train/masks"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/masks"
+  val_image_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/normal"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+# ── 模型配置 ──────────────────────────────────────────────────
+model:
+  name: "unet_resnet"
+  encoder_name: "resnet50"
+  in_channels: 1
+  out_channels: 1
+
+# ── 训练配置 ──────────────────────────────────────────────────
+training:
+  batch_size: 4
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+# ── 损失函数 ──────────────────────────────────────────────────
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+# ── 早停与模型保存（新目录）──────────────────────────────────
+checkpoint:
+  save_dir: "checkpoints_own_dias_mixed_resnet50"
+  early_stopping_patience: 15
+  save_best_only: true
+
+# ── 后处理 ────────────────────────────────────────────────────
+postprocess:
+  min_component_size: 50
+
+# ── 可视化 ────────────────────────────────────────────────────
+visualization:
+  output_dir: "results"
+  save_overlay: true

@@ -1,0 +1,40 @@
+# 实验7：U-Net baseline，纯 DIAS 数据训练（train 30 张）+ DIAS val 20 张测试
+data:
+  train_image_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/images"
+  train_mask_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/masks"
+  val_image_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/images"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_baseline"
+  in_channels: 1
+  out_channels: 1
+
+training:
+  batch_size: 4
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+  dice_smooth: 1.0e-6
+
+checkpoint:
+  save_dir: "checkpoints_dias_unet"
+  early_stopping_patience: 15
+  save_best_only: true
+
+postprocess:
+  min_component_size: 50
+
+visualization:
+  output_dir: "results"
+  save_overlay: true

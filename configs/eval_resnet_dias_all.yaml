@@ -1,0 +1,12 @@
+# 外部盲测配置（unet_resnet）：DIAS-all（DIAS train 30 + val 20 合并，共 50 对）
+data:
+  val_image_dir: "C:/Users/13091/Desktop/数据集/DIAS-all/images"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/DIAS-all/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
