@@ -330,28 +330,6 @@
             <p class="hint-text">支持 .png, .jpg, .bmp, .tif</p>
         </div>
 
-        <div class="threshold-scan-panel glass-panel">
-            <div class="scan-heading">
-                <div>
-                    <h3 class="card-title">验证集阈值扫描</h3>
-                    <p class="hint-text">使用当前验证集和所选权重比较多个阈值，选择 Dice 最高者</p>
-                </div>
-                <button class="btn btn-secondary" id="btn-threshold-scan">📊 批量测试阈值</button>
-            </div>
-            <div class="form-group">
-                <label for="threshold-scan-values">阈值列表（逗号分隔）</label>
-                <input type="text" id="threshold-scan-values" value="0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70">
-            </div>
-            <div id="threshold-scan-status" class="hint-text">尚未开始扫描</div>
-            <div class="threshold-best" id="threshold-scan-best" style="display:none"></div>
-            <div class="threshold-table-wrap" id="threshold-scan-table-wrap" style="display:none">
-                <table class="ckpt-table threshold-table">
-                    <thead><tr><th>阈值</th><th>Dice</th><th>IoU</th><th>Precision</th><th>Recall</th></tr></thead>
-                    <tbody id="threshold-scan-table-body"></tbody>
-                </table>
-            </div>
-        </div>
-
         <!-- Side-by-side results -->
         <div class="infer-results-row" id="inference-results-row">
             <div class="infer-result-box glass-panel">
@@ -372,6 +350,28 @@
         <div class="config-card glass-panel" id="batch-inference-results" style="display:none">
             <h3 class="card-title">批量推理结果</h3>
             <div id="batch-inference-grid" class="infer-results-row"></div>
+        </div>
+
+        <div class="threshold-scan-panel glass-panel">
+            <div class="scan-heading">
+                <div>
+                    <h3 class="card-title">验证集阈值扫描</h3>
+                    <p class="hint-text">使用当前验证集和所选权重比较多个阈值，选择 Dice 最高者</p>
+                </div>
+                <button class="btn btn-secondary" id="btn-threshold-scan">📊 批量测试阈值</button>
+            </div>
+            <div class="form-group">
+                <label for="threshold-scan-values">阈值列表（逗号分隔）</label>
+                <input type="text" id="threshold-scan-values" value="0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70">
+            </div>
+            <div id="threshold-scan-status" class="hint-text">尚未开始扫描</div>
+            <div class="threshold-best" id="threshold-scan-best" style="display:none"></div>
+            <div class="threshold-table-wrap" id="threshold-scan-table-wrap" style="display:none">
+                <table class="ckpt-table threshold-table">
+                    <thead><tr><th>阈值</th><th>Dice</th><th>IoU</th><th>Precision</th><th>Recall</th></tr></thead>
+                    <tbody id="threshold-scan-table-body"></tbody>
+                </table>
+            </div>
         </div>
     </section>
 
