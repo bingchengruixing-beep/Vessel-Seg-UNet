@@ -83,6 +83,7 @@
         infThreshold: document.getElementById('inference-threshold'),
         infThresholdValue: document.getElementById('inference-threshold-value'),
         infProcessing: document.getElementById('inference-processing'),
+        infProcessingHint: document.getElementById('inference-processing-hint'),
         btnRunInference: document.getElementById('btn-run-inference'),
         thresholdScanValues: document.getElementById('threshold-scan-values'),
         btnThresholdScan: document.getElementById('btn-threshold-scan'),
@@ -829,6 +830,17 @@
         return { processing: els.infProcessing?.value || 'config' };
     }
 
+    function updateProcessingHint() {
+        if (!els.infProcessingHint) return;
+        const hints = {
+            off: '不进行连通域、孔洞或形态学处理',
+            light: '去除很小的噪点，尽量保留细血管',
+            config: '使用配置中的标准连通域、孔洞和闭运算参数',
+            strong: '去除更多小区域并加强闭运算，结果更平滑但可能丢失细血管'
+        };
+        els.infProcessingHint.textContent = hints[els.infProcessing?.value] || hints.config;
+    }
+
     function renderBatchResults(results) {
         if (!els.batchInferenceGrid || !els.batchInferenceResults) return;
         els.batchInferenceGrid.innerHTML = '';
@@ -1005,6 +1017,10 @@
             els.btnRunInference.addEventListener('click', runInference);
         }
         if (els.btnThresholdScan) els.btnThresholdScan.addEventListener('click', scanThresholds);
+        if (els.infProcessing) {
+            els.infProcessing.addEventListener('change', updateProcessingHint);
+            updateProcessingHint();
+        }
 
         if (els.infThreshold) {
             els.infThreshold.addEventListener('input', (e) => {
