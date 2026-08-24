@@ -84,7 +84,23 @@ def _safe_checkpoint_name(filename: str) -> str:
 
 
 def _checkpoint_path(filename: str) -> Path:
-    return resolve_checkpoint_dir(_load_config(), PROJECT_ROOT) / _safe_checkpoint_name(filename)
+    safe_name = _safe_checkpoint_name(filename)
+    directories = _checkpoint_directories(_load_config())
+    for directory in directories:
+        candidate = directory / safe_name
+        if candidate.is_file():
+            return candidate
+    return directories[0] / safe_name
+
+
+def _checkpoint_directories(config: dict) -> list[Path]:
+    """返回配置目录及本项目已有权重目录，供网页列表和推理共用。"""
+    directories = [resolve_checkpoint_dir(config, PROJECT_ROOT)]
+    for name in ("checkpoints_b", "checkpoints_web"):
+        directory = PROJECT_ROOT / name
+        if directory not in directories:
+            directories.append(directory)
+    return directories
 
 
 def _stop_requested() -> bool:
@@ -264,13 +280,19 @@ def model_info():
 
 @app.route("/api/checkpoints", methods=["GET"])
 def list_checkpoints():
-    directory = resolve_checkpoint_dir(_load_config(), PROJECT_ROOT)
-    if not directory.exists():
-        return jsonify([])
-    checkpoints = [
-        {"name": file.name, "size": file.stat().st_size, "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat()}
-        for file in directory.iterdir() if file.is_file() and file.suffix.lower() == ".pth"
-    ]
+    checkpoints = []
+    seen_names = set()
+    for directory in _checkpoint_directories(_load_config()):
+        if not directory.exists():
+            continue
+        for file in directory.iterdir():
+            if file.is_file() and file.suffix.lower() == ".pth" and file.name not in seen_names:
+                checkpoints.append({
+                    "name": file.name,
+                    "size": file.stat().st_size,
+                    "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
+                })
+                seen_names.add(file.name)
     return jsonify(sorted(checkpoints, key=lambda item: item["modified"], reverse=True))
 
 
