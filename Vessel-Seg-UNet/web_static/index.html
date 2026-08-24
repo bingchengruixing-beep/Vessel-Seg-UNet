@@ -143,6 +143,37 @@
                         <input type="number" id="cfg-num-workers" value="0" min="0" max="16">
                     </div>
                 </div>
+                <div class="form-group switch-row">
+                    <label>弹性形变增强</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-elastic-transform">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="cfg-patch-group">
+                    <div class="form-group switch-row">
+                        <label>前景 Patch 训练</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="cfg-patch-enabled">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Patch 尺寸</label>
+                            <input type="number" id="cfg-patch-size" value="640" min="128" step="32">
+                        </div>
+                        <div class="form-group">
+                            <label>前景采样概率</label>
+                            <input type="number" id="cfg-patch-foreground-probability" value="0.7" min="0" max="1" step="0.1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Patch 推理滑动步长</label>
+                        <input type="number" id="cfg-patch-stride" value="480" min="64" step="32">
+                        <p class="hint-text">建议 Patch 640、步长 480；训练和推理均使用原图局部区域。</p>
+                    </div>
+                </div>
             </div>
 
             <!-- 模型配置 -->
@@ -153,6 +184,16 @@
                     <select id="cfg-model-name">
                         <option value="unet_baseline">U-Net Baseline</option>
                         <option value="attention_unet">Attention U-Net</option>
+                        <option value="unet_resnet">U-Net + ResNet 编码器</option>
+                        <option value="resunet_aspp">ResUNet-ASPP + U-Net++ 深监督</option>
+                        <option value="vessel_fusion">VesselFusion 多尺度细结构融合</option>
+                    </select>
+                </div>
+                <div class="form-group" id="cfg-encoder-group">
+                    <label>ResNet 编码器</label>
+                    <select id="cfg-encoder-name">
+                        <option value="resnet34">ResNet34</option>
+                        <option value="resnet50">ResNet50</option>
                     </select>
                 </div>
                 <div class="form-row">
@@ -164,6 +205,20 @@
                         <label>输出通道数</label>
                         <input type="number" id="cfg-out-channels" value="1" min="1" max="4">
                     </div>
+                </div>
+                <div class="form-group switch-row">
+                    <label>ImageNet 预训练编码器</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-pretrained" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group switch-row" id="cfg-deep-supervision-group">
+                    <label>U-Net++ 深监督</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-deep-supervision" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
 
@@ -234,7 +289,14 @@
                     </div>
                     <input type="range" id="cfg-dice-weight" class="range-input" min="0" max="1" step="0.05" value="0.5">
                 </div>
-                <p class="hint-text">两项权重之和应为 1.0（自动联动）</p>
+                <div class="form-group" id="cfg-cldice-group" style="display:none">
+                    <div class="slider-label-row">
+                        <label>clDice 权重</label>
+                        <span class="mono" id="cfg-cldice-weight-value">0.15</span>
+                    </div>
+                    <input type="range" id="cfg-cldice-weight" class="range-input" min="0" max="1" step="0.05" value="0.15">
+                </div>
+                <p class="hint-text" id="cfg-loss-weight-hint">BCE 与 Dice 权重之和为 1.0（自动联动）</p>
             </div>
 
             <!-- 早停与保存 -->
@@ -280,21 +342,31 @@
                     <label>二值化阈值</label>
                     <span class="mono" id="inference-threshold-value">0.50</span>
                 </div>
-                <input type="range" id="inference-threshold" class="range-input" min="0" max="1" step="0.05" value="0.5">
+                <input type="range" id="inference-threshold" class="range-input" min="0" max="1" step="0.01" value="0.5">
+            </div>
+            <div class="form-group">
+                <label>后处理方式</label>
+                <select id="inference-processing">
+                    <option value="off">原始输出</option>
+                    <option value="light">轻度清理</option>
+                    <option value="config">标准清理</option>
+                    <option value="strong">强力清理</option>
+                </select>
+                <p class="hint-text" id="inference-processing-hint">不进行连通域、孔洞或形态学处理</p>
             </div>
             <button class="btn btn-primary" id="btn-run-inference">▶ 执行推理</button>
         </div>
 
         <!-- Drop zone -->
         <div class="infer-drop-zone glass-panel" id="inference-dropzone">
-            <input type="file" id="inference-file-input" accept="image/*" style="display:none">
+            <input type="file" id="inference-file-input" accept="image/*" multiple style="display:none">
             <div class="drop-icon">📁</div>
             <p>拖拽图像至此，或<button class="link-btn" onclick="document.getElementById('inference-file-input').click()">点击上传</button></p>
             <p class="hint-text">支持 .png, .jpg, .bmp, .tif</p>
         </div>
 
         <!-- Side-by-side results -->
-        <div class="infer-results-row">
+        <div class="infer-results-row" id="inference-results-row">
             <div class="infer-result-box glass-panel">
                 <div class="result-title">原始图像</div>
                 <div class="result-img-wrap">
@@ -308,6 +380,32 @@
                     <img id="inference-result" alt="预测掩膜" style="display:none">
                     <div class="img-placeholder" id="inf-result-placeholder">执行推理后显示</div>
                 </div>
+            </div>
+        </div>
+        <div class="config-card glass-panel" id="batch-inference-results" style="display:none">
+            <h3 class="card-title">批量推理结果</h3>
+            <div id="batch-inference-grid" class="infer-results-row"></div>
+        </div>
+
+        <div class="threshold-scan-panel glass-panel">
+            <div class="scan-heading">
+                <div>
+                    <h3 class="card-title">验证集阈值扫描</h3>
+                    <p class="hint-text">按 0.01 步长扫描阈值，页面只显示最佳值附近的 4 个结果</p>
+                </div>
+                <button class="btn btn-secondary" id="btn-threshold-scan">📊 批量测试阈值</button>
+            </div>
+                <div class="form-group">
+                    <label for="threshold-scan-values">扫描范围（起点-终点，步长 0.01）</label>
+                    <input type="text" id="threshold-scan-values" value="0.30-0.80" placeholder="例如 0.30-0.80，也支持逗号列表">
+            </div>
+            <div id="threshold-scan-status" class="hint-text">尚未开始扫描</div>
+            <div class="threshold-best" id="threshold-scan-best" style="display:none"></div>
+            <div class="threshold-table-wrap" id="threshold-scan-table-wrap" style="display:none">
+                <table class="ckpt-table threshold-table">
+                    <thead><tr><th>阈值</th><th>Dice</th><th>IoU</th><th>Precision</th><th>Recall</th></tr></thead>
+                    <tbody id="threshold-scan-table-body"></tbody>
+                </table>
             </div>
         </div>
     </section>

@@ -15,6 +15,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "num_workers": 0,
         "pin_memory": True,
         "keep_aspect_ratio": True,
+        "augmentation": {
+            "elastic_transform": False,
+        },
+        "patch": {
+            "enabled": False,
+            "size": 640,
+            "foreground_probability": 0.7,
+            "min_foreground_ratio": 0.002,
+        },
         "train_image_dir": "data/train/images",
         "train_mask_dir": "data/train/masks",
         "val_image_dir": "data/val/images",
@@ -24,6 +33,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "name": "unet_baseline",
         "in_channels": 1,
         "out_channels": 1,
+        "encoder_name": "resnet34",
+        "pretrained": True,
+        "deep_supervision": True,
     },
     "training": {
         "batch_size": 1,
@@ -44,6 +56,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "dice_smooth": 1e-6,
             # > 0 时启用 clDice 中心线监督(数据集会额外返回骨架)
             "cl_dice_weight": 0.0,
+            "cldice_weight": 0.0,
+            "skeleton_iterations": 5,
             "focal_tversky": {
                 "alpha": 0.7,
                 "beta": 0.3,
@@ -65,6 +79,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "threshold": 0.5,
         # null means "use dataset.img_size" and keeps training/inference aligned.
         "img_size": None,
+        "patch": {
+            "enabled": False,
+            "size": 640,
+            "stride": 480,
+        },
         "postprocess": {
             "enabled": True,
             "min_component_size": 50,
@@ -159,10 +178,26 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _nonnegative_int(dataset.get("num_workers"), "dataset.num_workers")
     if not isinstance(dataset.get("keep_aspect_ratio"), bool):
         raise ConfigError("dataset.keep_aspect_ratio must be boolean")
+    augmentation = dataset.get("augmentation")
+    if not isinstance(augmentation, Mapping) or not isinstance(augmentation.get("elastic_transform"), bool):
+        raise ConfigError("dataset.augmentation.elastic_transform must be boolean")
+    patch = dataset.get("patch")
+    if not isinstance(patch, Mapping):
+        raise ConfigError("dataset.patch must be a mapping")
+    if not isinstance(patch.get("enabled"), bool):
+        raise ConfigError("dataset.patch.enabled must be boolean")
+    _positive_int(patch.get("size"), "dataset.patch.size")
+    _probability(patch.get("foreground_probability"), "dataset.patch.foreground_probability")
+    _nonnegative_float(patch.get("min_foreground_ratio"), "dataset.patch.min_foreground_ratio")
     _positive_int(model.get("in_channels"), "model.in_channels")
     _positive_int(model.get("out_channels"), "model.out_channels")
-    if model.get("name") not in {"unet_baseline", "attention_unet"}:
-        raise ConfigError("model.name must be 'unet_baseline' or 'attention_unet'")
+    if model.get("name") not in {"unet_baseline", "attention_unet", "unet_resnet", "resunet_aspp", "vessel_fusion"}:
+        raise ConfigError("model.name must be unet_baseline, attention_unet, unet_resnet, resunet_aspp, or vessel_fusion")
+    if model.get("name") == "unet_resnet" and model.get("encoder_name") not in {"resnet34", "resnet50"}:
+        raise ConfigError("model.encoder_name must be resnet34 or resnet50")
+    for field in ("pretrained", "deep_supervision"):
+        if not isinstance(model.get(field), bool):
+            raise ConfigError(f"model.{field} must be boolean")
 
     _positive_int(training.get("batch_size"), "training.batch_size")
     _positive_int(training.get("epochs"), "training.epochs")
@@ -184,14 +219,21 @@ def validate_config(config: Mapping[str, Any]) -> None:
     postprocess = inference.get("postprocess")
     if not all(isinstance(section, Mapping) for section in (loss, early_stopping, checkpoint, postprocess)):
         raise ConfigError("training loss/checkpoint settings and inference postprocess must be mappings")
-    if loss.get("name") not in {"BCEDiceLoss", "FocalTverskyLoss"}:
-        raise ConfigError("training.loss.name must be 'BCEDiceLoss' or 'FocalTverskyLoss'")
+    if loss.get("name") not in {"BCEDiceLoss", "FocalTverskyLoss", "BCEDiceClDiceLoss"}:
+        raise ConfigError("training.loss.name must be BCEDiceLoss, FocalTverskyLoss, or BCEDiceClDiceLoss")
     bce_weight = _nonnegative_float(loss.get("bce_weight"), "training.loss.bce_weight")
     dice_weight = _nonnegative_float(loss.get("dice_weight"), "training.loss.dice_weight")
     if bce_weight + dice_weight <= 0:
         raise ConfigError("At least one loss weight must be positive")
     _positive_float(loss.get("dice_smooth"), "training.loss.dice_smooth")
-    _nonnegative_float(loss.get("cl_dice_weight"), "training.loss.cl_dice_weight")
+    _nonnegative_float(loss.get("cl_dice_weight", loss.get("cldice_weight", 0.0)), "training.loss.cl_dice_weight")
+    _nonnegative_float(loss.get("cldice_weight", loss.get("cl_dice_weight", 0.0)), "training.loss.cldice_weight")
+    _positive_int(loss.get("skeleton_iterations", 5), "training.loss.skeleton_iterations")
+    deep_supervision_weights = training.get("deep_supervision_weights", [0.3, 0.2])
+    if not isinstance(deep_supervision_weights, list) or any(
+        not isinstance(value, (int, float)) or float(value) < 0 for value in deep_supervision_weights
+    ):
+        raise ConfigError("training.deep_supervision_weights must be a list of non-negative numbers")
     focal_tversky = loss.get("focal_tversky")
     if not isinstance(focal_tversky, Mapping):
         raise ConfigError("training.loss.focal_tversky must be a mapping")
@@ -210,6 +252,15 @@ def validate_config(config: Mapping[str, Any]) -> None:
             raise ConfigError(f"{name} must be between 0 and 1")
     if inference.get("img_size") is not None:
         _positive_int(inference["img_size"], "inference.img_size")
+    inference_patch = inference.get("patch")
+    if not isinstance(inference_patch, Mapping):
+        raise ConfigError("inference.patch must be a mapping")
+    if not isinstance(inference_patch.get("enabled"), bool):
+        raise ConfigError("inference.patch.enabled must be boolean")
+    _positive_int(inference_patch.get("size"), "inference.patch.size")
+    _positive_int(inference_patch.get("stride"), "inference.patch.stride")
+    if inference_patch["stride"] > inference_patch["size"]:
+        raise ConfigError("inference.patch.stride must not exceed inference.patch.size")
     _positive_int(postprocess.get("min_component_size"), "inference.postprocess.min_component_size")
     _positive_int(postprocess.get("max_hole_size"), "inference.postprocess.max_hole_size")
     _positive_int(postprocess.get("morph_close_kernel"), "inference.postprocess.morph_close_kernel")
@@ -260,4 +311,11 @@ def _positive_float(value: Any, field: str) -> float:
 def _nonnegative_float(value: Any, field: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0:
         raise ConfigError(f"{field} must be non-negative")
+    return float(value)
+
+
+def _probability(value: Any, field: str) -> float:
+    """校验概率字段并限制在闭区间 [0, 1]。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0.0 <= float(value) <= 1.0:
+        raise ConfigError(f"{field} must be between 0 and 1")
     return float(value)

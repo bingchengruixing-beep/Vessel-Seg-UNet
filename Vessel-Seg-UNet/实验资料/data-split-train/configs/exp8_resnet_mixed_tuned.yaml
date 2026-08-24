@@ -1,0 +1,57 @@
+# ══════════════════════════════════════════════════════════════
+# 实验 8：超参调优 + 强增强，基于实验 6（unet_resnet + own+DIAS）
+# 改动：dice_smooth 1e-6→1.0、dice_weight 0.5→0.7、lr 1e-4→3e-4、开启 strong_aug
+# 对比实验 6，考察调优能否在最优基础上进一步提升
+# ══════════════════════════════════════════════════════════════
+
+# ── 数据路径（train 为多目录合并）─────────────────────────────
+data:
+  train_image_dir:
+    - "C:/Users/13091/Desktop/数据集/own_split/own_train/normal"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/images"
+  train_mask_dir:
+    - "C:/Users/13091/Desktop/数据集/own_split/own_train/masks"
+    - "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/train/masks"
+  val_image_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/normal"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/own_split/own_val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+  strong_aug: true              # 开启强增强（ShiftScaleRotate/GridDistortion/RandomGamma）
+
+# ── 模型配置 ──────────────────────────────────────────────────
+model:
+  name: "unet_resnet"
+  in_channels: 1
+  out_channels: 1
+
+# ── 训练配置（lr 提到 3e-4）──────────────────────────────────
+training:
+  batch_size: 4
+  epochs: 100
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  scheduler: "cosine"
+  use_amp: true
+
+# ── 损失函数（soft dice + 提高 dice 权重）─────────────────────
+loss:
+  bce_weight: 0.3
+  dice_weight: 0.7
+  dice_smooth: 1.0
+
+# ── 早停与模型保存（新目录）──────────────────────────────────
+checkpoint:
+  save_dir: "checkpoints_own_dias_mixed_resnet_tuned"
+  early_stopping_patience: 15
+  save_best_only: true
+
+# ── 后处理 ────────────────────────────────────────────────────
+postprocess:
+  min_component_size: 50
+
+# ── 可视化 ────────────────────────────────────────────────────
+visualization:
+  output_dir: "results"
+  save_overlay: true

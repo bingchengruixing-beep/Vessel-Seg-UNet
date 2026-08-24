@@ -10,88 +10,71 @@
     - 输出 mask:  (1, H, W) float32 {0.0, 1.0}
 """
 
-import os
-
-os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
-
 import albumentations as A
-import cv2
 from albumentations.pytorch import ToTensorV2
 
 
-def _resize_or_pad(img_size: int, keep_aspect_ratio: bool) -> list:
-    """Build a spatial normalization pipeline shared by training and inference."""
-    if not keep_aspect_ratio:
-        return [A.Resize(img_size, img_size)]
-    return [
-        A.LongestMaxSize(max_size=img_size, interpolation=cv2.INTER_LINEAR),
-        A.PadIfNeeded(
-            min_height=img_size,
-            min_width=img_size,
-            border_mode=cv2.BORDER_CONSTANT,
-        ),
-    ]
-
-
-def get_train_transforms(
-    img_size: int = 512,
-    keep_aspect_ratio: bool = True,
-    elastic_transform: bool = False,
-) -> A.Compose:
+def get_train_transforms(img_size: int = 512, strong_aug: bool = False) -> A.Compose:
     """
     返回训练阶段的 Albumentations 增强管线。
 
     包含:
         - 几何变换: 随机翻转、旋转(±30°)、弹性形变
         - 对比度/亮度扰动: CLAHE、RandomBrightnessContrast
-        - 尺寸统一: 等比例缩放 + 补边（可选退回强制 Resize）
+        - 尺寸统一: Resize → img_size x img_size
         - 归一化: [0, 255] → [0, 1]
         - ToTensorV2: numpy → torch.Tensor
 
     Args:
         img_size: 输出图像的边长（正方形）
-        keep_aspect_ratio: 是否等比例缩放并补边，避免拉伸血管形态
 
     Returns:
         Albumentations Compose 对象
     """
     transforms = [
-        *_resize_or_pad(img_size, keep_aspect_ratio),
+        A.Resize(img_size, img_size),
         # ── 几何变换 ──
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.Rotate(limit=30, border_mode=0, p=0.5),
+        A.ElasticTransform(
+            alpha=120, sigma=6,
+            border_mode=0, p=0.3
+        ),
         # ── 对比度/亮度扰动 ──
         A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
         A.RandomBrightnessContrast(
             brightness_limit=0.2, contrast_limit=0.2, p=0.3
         ),
+    ]
+    if strong_aug:
+        transforms += [
+            # ── 强增强（开关控制，对抗小数据过拟合）──
+            A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=30, border_mode=0, p=0.5),
+            A.GridDistortion(num_steps=5, distort_limit=0.3, border_mode=0, p=0.3),
+            A.RandomGamma(gamma_limit=(80, 120), p=0.3),
+        ]
+    transforms += [
         # ── 归一化 + Tensor ──
         A.Normalize(mean=[0.0], std=[1.0], max_pixel_value=255.0),
         ToTensorV2(),
     ]
-    if elastic_transform:
-        transforms.insert(5, A.ElasticTransform(alpha=120, sigma=6, border_mode=0, p=0.3))
     return A.Compose(transforms, is_check_shapes=False)
 
 
-def get_val_transforms(
-    img_size: int = 512,
-    keep_aspect_ratio: bool = True,
-) -> A.Compose:
+def get_val_transforms(img_size: int = 512) -> A.Compose:
     """
     返回验证/测试阶段的 Albumentations 增强管线。
     仅做 Resize + 归一化，不做随机增强。
 
     Args:
         img_size: 输出图像的边长（正方形）
-        keep_aspect_ratio: 是否等比例缩放并补边，避免拉伸血管形态
 
     Returns:
         Albumentations Compose 对象
     """
     return A.Compose([
-        *_resize_or_pad(img_size, keep_aspect_ratio),
+        A.Resize(img_size, img_size),
         A.Normalize(mean=[0.0], std=[1.0], max_pixel_value=255.0),
         ToTensorV2(),
     ], is_check_shapes=False)

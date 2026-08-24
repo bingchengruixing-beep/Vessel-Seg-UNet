@@ -12,7 +12,7 @@ sys.path.insert(0, ROOT_DIR)
 
 from src.config import load_config, resolve_checkpoint_dir
 from src.dataset import get_dataloaders
-from src.models import build_model
+from src.models import build_model_from_config
 from src.trainer import Trainer
 from src.training import build_criterion, build_optimizer, build_scheduler, set_seed
 
@@ -56,11 +56,7 @@ def main():
     logger.info("Train: %s images | Val: %s images", len(train_loader.dataset), len(val_loader.dataset))
 
     model_cfg = config["model"]
-    model = build_model(
-        model_cfg["name"],
-        in_channels=model_cfg["in_channels"],
-        out_channels=model_cfg["out_channels"],
-    )
+    model = build_model_from_config(model_cfg)
     logger.info(
         "Model: %s | Trainable parameters: %s",
         model_cfg["name"],

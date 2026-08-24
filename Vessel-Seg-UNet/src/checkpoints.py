@@ -78,6 +78,21 @@ def load_model_state(model: torch.nn.Module, checkpoint: Mapping[str, Any]) -> N
     model.load_state_dict(checkpoint["model_state_dict"])
 
 
+def infer_legacy_model_name(checkpoint: Mapping[str, Any]) -> str | None:
+    """根据旧版裸 state_dict 的层名推断真实模型结构。"""
+    state_dict = checkpoint.get("model_state_dict")
+    if not isinstance(state_dict, Mapping):
+        return None
+    keys = tuple(str(key) for key in state_dict.keys())
+    if any(key.startswith("final_refine.") for key in keys):
+        return "vessel_fusion"
+    if any(key.startswith("aspp.") or key.startswith("x3_1.") for key in keys):
+        return "resunet_aspp"
+    if any(key.startswith("dec4.") for key in keys):
+        return "unet_resnet"
+    return None
+
+
 def checkpoint_model_config(
     checkpoint: Mapping[str, Any], fallback_config: Mapping[str, Any]
 ) -> dict[str, Any]:

@@ -17,6 +17,7 @@
 """
 
 import os
+import random
 import cv2
 import numpy as np
 import torch
@@ -42,6 +43,9 @@ class VesselDataset(Dataset):
     """
 
     SUPPORTED_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+    patch_size: Optional[int] = None
+    foreground_probability: float = 0.0
+    min_foreground_ratio: float = 0.0
 
     def __init__(
         self,
@@ -49,11 +53,17 @@ class VesselDataset(Dataset):
         mask_dir: str,
         transform=None,
         return_skeleton: bool = False,
+        patch_size: Optional[int] = None,
+        foreground_probability: float = 0.0,
+        min_foreground_ratio: float = 0.0,
     ):
         self.image_dir = image_dir
         self.mask_dir = mask_dir
         self.transform = transform
         self.return_skeleton = return_skeleton
+        self.patch_size = int(patch_size) if patch_size else None
+        self.foreground_probability = float(foreground_probability)
+        self.min_foreground_ratio = float(min_foreground_ratio)
 
         # 收集所有支持格式的图像文件名（仅保留在 mask_dir 中也存在的）
         self.filenames = sorted([
@@ -99,6 +109,9 @@ class VesselDataset(Dataset):
         # 硬阈值二值化：>127 → 255, 其余 → 0
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
+        if self.patch_size:
+            image, mask = self._sample_patch(image, mask)
+
         # ── 数据增强 ──
         if self.transform is not None:
             augmented = self.transform(image=image, mask=mask)
@@ -123,6 +136,36 @@ class VesselDataset(Dataset):
             return image, mask, skeleton
 
         return image, mask
+
+    def _sample_patch(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """从原始分辨率图像裁剪固定大小 patch，优先保留含血管区域。"""
+        size = self.patch_size
+        if size is None:
+            return image, mask
+        height, width = image.shape[:2]
+        pad_height = max(0, size - height)
+        pad_width = max(0, size - width)
+        if pad_height or pad_width:
+            image = np.pad(image, ((0, pad_height), (0, pad_width)), mode="constant")
+            mask = np.pad(mask, ((0, pad_height), (0, pad_width)), mode="constant")
+            height, width = image.shape[:2]
+        max_top = height - size
+        max_left = width - size
+        foreground = mask > 127
+        use_foreground = (
+            random.random() < self.foreground_probability
+            and float(foreground.mean()) >= self.min_foreground_ratio
+            and bool(foreground.any())
+        )
+        if use_foreground:
+            ys, xs = np.where(foreground)
+            center_index = random.randrange(len(ys))
+            top = min(max(int(ys[center_index]) - size // 2, 0), max_top)
+            left = min(max(int(xs[center_index]) - size // 2, 0), max_left)
+        else:
+            top = random.randint(0, max_top) if max_top else 0
+            left = random.randint(0, max_left) if max_left else 0
+        return image[top:top + size, left:left + size], mask[top:top + size, left:left + size]
 
 
 def get_dataloaders(
@@ -149,7 +192,15 @@ def get_dataloaders(
 
     # 构建增强管线
     keep_aspect_ratio = data_cfg.get('keep_aspect_ratio', True)
-    train_transform = get_train_transforms(img_size, keep_aspect_ratio)
+    augmentation_cfg = data_cfg.get("augmentation", {})
+    patch_cfg = data_cfg.get("patch", {})
+    use_patches = bool(patch_cfg.get("enabled", False))
+    train_size = int(patch_cfg.get("size", img_size)) if use_patches else img_size
+    train_transform = get_train_transforms(
+        train_size,
+        keep_aspect_ratio,
+        elastic_transform=bool(augmentation_cfg.get("elastic_transform", False)),
+    )
     val_transform = get_val_transforms(img_size, keep_aspect_ratio)
 
     # clDice 监督需要数据集同时返回金标准骨架
@@ -165,6 +216,9 @@ def get_dataloaders(
         mask_dir=str(resolve_data_path(data_cfg['train_mask_dir'], root)),
         transform=train_transform,
         return_skeleton=return_skeleton,
+        patch_size=train_size if use_patches else None,
+        foreground_probability=float(patch_cfg.get("foreground_probability", 0.0)),
+        min_foreground_ratio=float(patch_cfg.get("min_foreground_ratio", 0.0)),
     )
     val_dataset = VesselDataset(
         image_dir=str(resolve_data_path(data_cfg['val_image_dir'], root)),

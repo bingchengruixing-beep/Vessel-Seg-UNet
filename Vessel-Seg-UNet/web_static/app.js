@@ -8,6 +8,7 @@
             metrics: null
         },
         inferenceImageBase64: null,
+        inferenceFiles: [],
         config: null
     };
 
@@ -43,9 +44,20 @@
         cfgValMaskDir: document.getElementById('cfg-val-mask-dir'),
         cfgImgSize: document.getElementById('cfg-img-size'),
         cfgNumWorkers: document.getElementById('cfg-num-workers'),
+        cfgElasticTransform: document.getElementById('cfg-elastic-transform'),
+        cfgPatchEnabled: document.getElementById('cfg-patch-enabled'),
+        cfgPatchSize: document.getElementById('cfg-patch-size'),
+        cfgPatchForegroundProbability: document.getElementById('cfg-patch-foreground-probability'),
+        cfgPatchStride: document.getElementById('cfg-patch-stride'),
+        cfgPatchGroup: document.getElementById('cfg-patch-group'),
         cfgModelName: document.getElementById('cfg-model-name'),
+        cfgEncoderName: document.getElementById('cfg-encoder-name'),
+        cfgEncoderGroup: document.getElementById('cfg-encoder-group'),
         cfgInChannels: document.getElementById('cfg-in-channels'),
         cfgOutChannels: document.getElementById('cfg-out-channels'),
+        cfgPretrained: document.getElementById('cfg-pretrained'),
+        cfgDeepSupervision: document.getElementById('cfg-deep-supervision'),
+        cfgDeepSupervisionGroup: document.getElementById('cfg-deep-supervision-group'),
         cfgBatchSize: document.getElementById('cfg-batch-size'),
         cfgLearningRate: document.getElementById('cfg-learning-rate'),
         cfgWeightDecay: document.getElementById('cfg-weight-decay'),
@@ -57,6 +69,10 @@
         cfgDiceWeight: document.getElementById('cfg-dice-weight'),
         cfgBceWeightValue: document.getElementById('cfg-bce-weight-value'),
         cfgDiceWeightValue: document.getElementById('cfg-dice-weight-value'),
+        cfgClDiceGroup: document.getElementById('cfg-cldice-group'),
+        cfgClDiceWeight: document.getElementById('cfg-cldice-weight'),
+        cfgClDiceWeightValue: document.getElementById('cfg-cldice-weight-value'),
+        cfgLossWeightHint: document.getElementById('cfg-loss-weight-hint'),
         cfgPatience: document.getElementById('cfg-patience'),
         cfgSaveDir: document.getElementById('cfg-save-dir'),
         cfgSaveBestOnly: document.getElementById('cfg-save-best-only'),
@@ -71,7 +87,17 @@
         infCheckpoint: document.getElementById('inference-checkpoint'),
         infThreshold: document.getElementById('inference-threshold'),
         infThresholdValue: document.getElementById('inference-threshold-value'),
+        infProcessing: document.getElementById('inference-processing'),
+        infProcessingHint: document.getElementById('inference-processing-hint'),
         btnRunInference: document.getElementById('btn-run-inference'),
+        thresholdScanValues: document.getElementById('threshold-scan-values'),
+        btnThresholdScan: document.getElementById('btn-threshold-scan'),
+        thresholdScanStatus: document.getElementById('threshold-scan-status'),
+        thresholdScanBest: document.getElementById('threshold-scan-best'),
+        thresholdScanTableWrap: document.getElementById('threshold-scan-table-wrap'),
+        thresholdScanTableBody: document.getElementById('threshold-scan-table-body'),
+        batchInferenceResults: document.getElementById('batch-inference-results'),
+        batchInferenceGrid: document.getElementById('batch-inference-grid'),
         
         // System
         sysGpuName: document.getElementById('sys-gpu-name'),
@@ -326,10 +352,18 @@
         setVal(els.cfgValMaskDir, cfg.dataset?.val_mask_dir || '');
         setVal(els.cfgImgSize, cfg.dataset?.img_size ?? 512);
         setVal(els.cfgNumWorkers, cfg.dataset?.num_workers ?? 0);
+        setCb(els.cfgElasticTransform, cfg.dataset?.augmentation?.elastic_transform ?? false);
+        setCb(els.cfgPatchEnabled, cfg.dataset?.patch?.enabled ?? false);
+        setVal(els.cfgPatchSize, cfg.dataset?.patch?.size ?? 640);
+        setVal(els.cfgPatchForegroundProbability, cfg.dataset?.patch?.foreground_probability ?? 0.7);
+        setVal(els.cfgPatchStride, cfg.inference?.patch?.stride ?? 480);
 
         setVal(els.cfgModelName, cfg.model?.name || 'unet_baseline');
+        setVal(els.cfgEncoderName, cfg.model?.encoder_name || 'resnet34');
         setVal(els.cfgInChannels, cfg.model?.in_channels || 1);
         setVal(els.cfgOutChannels, cfg.model?.out_channels || 1);
+        setCb(els.cfgPretrained, cfg.model?.pretrained ?? true);
+        setCb(els.cfgDeepSupervision, cfg.model?.deep_supervision ?? true);
 
         setVal(els.cfgBatchSize, cfg.training?.batch_size || 8);
         setVal(els.cfgLearningRate, cfg.training?.learning_rate || 0.001);
@@ -345,6 +379,10 @@
         setVal(els.cfgDiceWeight, dice_w);
         if (els.cfgBceWeightValue) els.cfgBceWeightValue.textContent = bce_w;
         if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = dice_w;
+        const cldice_w = cfg.training?.loss?.cldice_weight ?? cfg.training?.loss?.cl_dice_weight ?? 0.0;
+        setVal(els.cfgClDiceWeight, cldice_w);
+        if (els.cfgClDiceWeightValue) els.cfgClDiceWeightValue.textContent = Number(cldice_w).toFixed(2);
+        updateModelSpecificControls(cfg.model?.name || 'unet_baseline');
 
         setVal(els.cfgPatience, cfg.training?.early_stopping?.patience || 10);
         setVal(els.cfgSaveDir, cfg.training?.checkpoint?.save_dir || 'checkpoints');
@@ -364,13 +402,26 @@
                 val_mask_dir: getVal(els.cfgValMaskDir),
                 img_size: getNum(els.cfgImgSize),
                 num_workers: getNum(els.cfgNumWorkers),
+                augmentation: {
+                    ...(state.config?.dataset?.augmentation || {}),
+                    elastic_transform: getCb(els.cfgElasticTransform)
+                },
+                patch: {
+                    enabled: getCb(els.cfgPatchEnabled),
+                    size: getNum(els.cfgPatchSize),
+                    foreground_probability: getNum(els.cfgPatchForegroundProbability),
+                    min_foreground_ratio: state.config?.dataset?.patch?.min_foreground_ratio ?? 0.002
+                },
                 pin_memory: state.config?.dataset?.pin_memory ?? true,
                 keep_aspect_ratio: state.config?.dataset?.keep_aspect_ratio ?? true
             },
             model: {
                 name: getVal(els.cfgModelName),
                 in_channels: getNum(els.cfgInChannels),
-                out_channels: getNum(els.cfgOutChannels)
+                out_channels: getNum(els.cfgOutChannels),
+                encoder_name: getVal(els.cfgEncoderName) || 'resnet34',
+                pretrained: getCb(els.cfgPretrained),
+                deep_supervision: getCb(els.cfgDeepSupervision)
             },
             training: {
                 batch_size: getNum(els.cfgBatchSize),
@@ -380,11 +431,15 @@
                 optimizer: getVal(els.cfgOptimizer),
                 scheduler: getVal(els.cfgScheduler),
                 use_amp: getCb(els.cfgUseAmp),
+                deep_supervision_weights: state.config?.training?.deep_supervision_weights || [0.3, 0.2],
                 loss: {
-                    name: 'BCEDiceLoss',
+                    name: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? 'BCEDiceClDiceLoss' : 'BCEDiceLoss',
                     bce_weight: getNum(els.cfgBceWeight),
                     dice_weight: getNum(els.cfgDiceWeight),
-                    dice_smooth: state.config?.training?.loss?.dice_smooth ?? 1e-6
+                    cl_dice_weight: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? getNum(els.cfgClDiceWeight) : 0.0,
+                    cldice_weight: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? getNum(els.cfgClDiceWeight) : 0.0,
+                    dice_smooth: state.config?.training?.loss?.dice_smooth ?? 1e-6,
+                    skeleton_iterations: state.config?.training?.loss?.skeleton_iterations ?? 5
                 },
                 early_stopping: {
                     patience: getNum(els.cfgPatience)
@@ -396,10 +451,18 @@
                 }
             },
             evaluation: state.config?.evaluation ?? { threshold: 0.5, apply_postprocess: false },
-            inference: state.config?.inference ?? {
+            inference: {
+                ...(state.config?.inference ?? {
                 threshold: 0.5,
                 img_size: null,
                 postprocess: { enabled: true, min_component_size: 50, max_hole_size: 100, morph_close_kernel: 3 }
+                }),
+                patch: {
+                    ...(state.config?.inference?.patch || {}),
+                    enabled: getCb(els.cfgPatchEnabled),
+                    size: getNum(els.cfgPatchSize),
+                    stride: getNum(els.cfgPatchStride)
+                }
             }
         };
     }
@@ -650,7 +713,8 @@
                     `Epoch [${h.epoch}/${data.total_epochs}] - Train Loss: ${formatNumber(h.train_loss)}, Val Loss: ${formatNumber(h.val_loss)}, Dice: ${formatNumber(h.dice)}, IoU: ${formatNumber(h.iou)}`
                 );
                 const currentText = els.trainingLog.textContent;
-                const newText = logs.join('\n');
+                const logPathLine = data.log_path ? `日志文件: ${data.log_path}\n\n` : '';
+                const newText = logPathLine + logs.join('\n');
                 if (currentText !== newText) {
                     els.trainingLog.textContent = newText;
                     els.trainingLog.scrollTop = els.trainingLog.scrollHeight;
@@ -671,44 +735,49 @@
         
         if (els.infDropzone) els.infDropzone.style.borderColor = '#30363d';
         
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            processInferenceFile(e.dataTransfer.files[0]);
-        }
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) processInferenceFiles(e.dataTransfer.files);
     }
 
     function handleFileSelect(e) {
         if (e.target.files && e.target.files.length > 0) {
-            processInferenceFile(e.target.files[0]);
+            processInferenceFiles(e.target.files);
+        }
+    }
+
+    function readInferenceFile(file) {
+        return new Promise((resolve, reject) => {
+            if (!file.type.startsWith('image/')) {
+                reject(new Error(`${file.name} 不是图像文件`));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => resolve({ name: file.name, dataUrl: reader.result, image_base64: reader.result.split(',')[1] });
+            reader.onerror = () => reject(new Error(`读取 ${file.name} 失败`));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function processInferenceFiles(files) {
+        try {
+            state.inferenceFiles = await Promise.all(Array.from(files).slice(0, 32).map(readInferenceFile));
+            state.inferenceImageBase64 = state.inferenceFiles[0]?.image_base64 || null;
+            const first = state.inferenceFiles[0];
+            if (first && els.infOriginal) {
+                els.infOriginal.src = first.dataUrl;
+                els.infOriginal.style.display = 'block';
+                const ph = document.getElementById('inf-orig-placeholder');
+                if (ph) ph.style.display = 'none';
+            }
+            if (els.infResult) els.infResult.style.display = 'none';
+            if (els.batchInferenceResults) els.batchInferenceResults.style.display = state.inferenceFiles.length > 1 ? 'block' : 'none';
+            showToast(`已选择 ${state.inferenceFiles.length} 张图像`, 'success');
+        } catch (error) {
+            showToast(error.message, 'error');
         }
     }
 
     function processInferenceFile(file) {
-        if (!file.type.startsWith('image/')) {
-            showToast('请选择图像文件', 'error');
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const result = e.target.result;
-            state.inferenceImageBase64 = result.split(',')[1]; // remove prefix
-            if (els.infOriginal) {
-                els.infOriginal.src = result;
-                els.infOriginal.style.display = 'block';
-                const ph = document.getElementById('inf-orig-placeholder');
-                if(ph) ph.style.display = 'none';
-            }
-            if (els.infResult) {
-                els.infResult.src = '';
-                els.infResult.style.display = 'none';
-                const ph = document.getElementById('inf-result-placeholder');
-                if(ph) {
-                    ph.textContent = '执行推理后显示';
-                    ph.style.display = 'block';
-                }
-            }
-        };
-        reader.readAsDataURL(file);
+        processInferenceFiles([file]);
     }
 
     async function runInference() {
@@ -724,6 +793,7 @@
         }
         
         const threshold = els.infThreshold ? parseFloat(els.infThreshold.value) : 0.5;
+        const processingOptions = getProcessingOptions();
 
         if (els.btnRunInference) {
             els.btnRunInference.disabled = true;
@@ -731,14 +801,22 @@
         }
 
         try {
-            const res = await fetch('/api/inference', {
+            const endpoint = state.inferenceFiles.length > 1 ? '/api/inference-batch' : '/api/inference';
+            const body = state.inferenceFiles.length > 1 ? {
+                images: state.inferenceFiles.map(item => ({ name: item.name, image_base64: item.image_base64 })),
+                checkpoint: cp,
+                threshold: threshold,
+                ...processingOptions
+            } : {
+                image_base64: state.inferenceImageBase64,
+                checkpoint: cp,
+                threshold: threshold,
+                ...processingOptions
+            };
+            const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    image_base64: state.inferenceImageBase64,
-                    checkpoint: cp,
-                    threshold: threshold
-                })
+                body: JSON.stringify(body)
             });
             
             if (!res.ok) {
@@ -747,7 +825,10 @@
             }
             const data = await res.json();
             
-            if (els.infResult && data.mask_base64) {
+            if (state.inferenceFiles.length > 1 && data.results) {
+                renderBatchResults(data.results);
+                showToast(`批量推理完成，共 ${data.count} 张`, 'success');
+            } else if (els.infResult && data.mask_base64) {
                 els.infResult.src = 'data:image/png;base64,' + data.mask_base64;
                 els.infResult.style.display = 'block';
                 const ph = document.getElementById('inf-result-placeholder');
@@ -763,6 +844,153 @@
             if (els.btnRunInference) {
                 els.btnRunInference.disabled = false;
                 els.btnRunInference.textContent = '开始推理';
+            }
+        }
+    }
+
+    function getProcessingOptions() {
+        return { processing: els.infProcessing?.value || 'config' };
+    }
+
+    function updateProcessingHint() {
+        if (!els.infProcessingHint) return;
+        const hints = {
+            off: '不进行连通域、孔洞或形态学处理',
+            light: '去除很小的噪点，尽量保留细血管',
+            config: '使用配置中的标准连通域、孔洞和闭运算参数',
+            strong: '去除更多小区域并加强闭运算，结果更平滑但可能丢失细血管'
+        };
+        els.infProcessingHint.textContent = hints[els.infProcessing?.value] || hints.config;
+    }
+
+    function renderBatchResults(results) {
+        if (!els.batchInferenceGrid || !els.batchInferenceResults) return;
+        els.batchInferenceGrid.innerHTML = '';
+        results.forEach(item => {
+            const box = document.createElement('div');
+            box.className = 'infer-result-box glass-panel';
+            const title = document.createElement('div');
+            title.className = 'result-title';
+            title.textContent = item.name;
+            const wrap = document.createElement('div');
+            wrap.className = 'result-img-wrap';
+            const image = document.createElement('img');
+            image.alt = `${item.name} 预测掩膜`;
+            image.src = `data:image/png;base64,${item.mask_base64}`;
+            wrap.appendChild(image);
+            box.append(title, wrap);
+            els.batchInferenceGrid.appendChild(box);
+        });
+        els.batchInferenceResults.style.display = 'block';
+    }
+
+    function updateModelSpecificControls(modelName) {
+        const topologyModel = ['resunet_aspp', 'vessel_fusion'].includes(modelName);
+        const resnetModel = ['unet_resnet', 'resunet_aspp', 'vessel_fusion'].includes(modelName);
+        if (els.cfgPatchGroup) els.cfgPatchGroup.style.display = topologyModel ? '' : 'none';
+        if (els.cfgEncoderGroup) els.cfgEncoderGroup.style.display = resnetModel ? '' : 'none';
+        if (els.cfgClDiceGroup) els.cfgClDiceGroup.style.display = topologyModel ? '' : 'none';
+        if (els.cfgDeepSupervisionGroup) els.cfgDeepSupervisionGroup.style.display = topologyModel ? '' : 'none';
+        if (els.cfgLossWeightHint) {
+            els.cfgLossWeightHint.textContent = topologyModel
+                ? 'BCE + Dice + clDice 权重总和为 1.0（自动联动）'
+                : 'BCE 与 Dice 权重之和为 1.0（自动联动）';
+        }
+    }
+
+    function updateRegionWeights(changed) {
+        const topologyModel = ['resunet_aspp', 'vessel_fusion'].includes(els.cfgModelName?.value);
+        const cldice = topologyModel ? Number(els.cfgClDiceWeight?.value || 0) : 0;
+        const regionTotal = Math.max(0, 1 - cldice);
+        if (changed === 'bce') {
+            const bce = Math.min(regionTotal, Math.max(0, Number(els.cfgBceWeight.value)));
+            els.cfgBceWeight.value = bce.toFixed(2);
+            els.cfgDiceWeight.value = (regionTotal - bce).toFixed(2);
+        } else {
+            const dice = Math.min(regionTotal, Math.max(0, Number(els.cfgDiceWeight.value)));
+            els.cfgDiceWeight.value = dice.toFixed(2);
+            els.cfgBceWeight.value = (regionTotal - dice).toFixed(2);
+        }
+        if (els.cfgBceWeightValue) els.cfgBceWeightValue.textContent = Number(els.cfgBceWeight.value).toFixed(2);
+        if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = Number(els.cfgDiceWeight.value).toFixed(2);
+        if (els.cfgClDiceWeightValue) els.cfgClDiceWeightValue.textContent = cldice.toFixed(2);
+    }
+
+    async function scanThresholds() {
+        const checkpoint = els.infCheckpoint?.value;
+        if (!checkpoint) {
+            showToast('请选择模型权重', 'error');
+            return;
+        }
+        const rawValues = (els.thresholdScanValues?.value || '').trim();
+        let thresholds;
+        const rangeMatch = rawValues.match(/^\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*-\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*$/);
+        if (rangeMatch) {
+            const start = Number(rangeMatch[1]);
+            const end = Number(rangeMatch[2]);
+            if (start > end) {
+                showToast('扫描范围的起点不能大于终点', 'error');
+                return;
+            }
+            thresholds = [];
+            for (let value = start; value <= end + 1e-9; value += 0.01) {
+                thresholds.push(Number(value.toFixed(2)));
+            }
+        } else {
+            thresholds = rawValues.split(',').map(value => Number(value.trim())).filter(value => Number.isFinite(value));
+        }
+        if (!thresholds.length || thresholds.length > 101 || thresholds.some(value => value < 0 || value > 1)) {
+            showToast('阈值必须是 0 到 1 之间的数字，最多 101 个', 'error');
+            return;
+        }
+        if (els.btnThresholdScan) {
+            els.btnThresholdScan.disabled = true;
+            els.btnThresholdScan.textContent = '扫描中...';
+        }
+        if (els.thresholdScanStatus) els.thresholdScanStatus.textContent = '正在读取验证集并计算各阈值...';
+        try {
+            const res = await fetch('/api/threshold-scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    checkpoint,
+                    thresholds,
+                    ...getProcessingOptions()
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || '阈值扫描失败');
+            if (els.thresholdScanStatus) els.thresholdScanStatus.textContent = `已完成：${data.samples} 张验证图像，设备 ${data.device}`;
+            if (els.thresholdScanBest) {
+                els.thresholdScanBest.textContent = `最佳阈值 ${Number(data.best_threshold).toFixed(2)} | Dice ${formatNumber(data.best_dice)}`;
+                els.thresholdScanBest.style.display = 'block';
+            }
+            if (els.thresholdScanTableBody) {
+                els.thresholdScanTableBody.innerHTML = '';
+                const bestThreshold = Number(data.best_threshold);
+                const nearbyResults = [...data.results]
+                    .sort((left, right) => Math.abs(Number(left.threshold) - bestThreshold) - Math.abs(Number(right.threshold) - bestThreshold))
+                    .slice(0, 4)
+                    .sort((left, right) => Number(left.threshold) - Number(right.threshold));
+                nearbyResults.forEach(item => {
+                    const row = document.createElement('tr');
+                    [Number(item.threshold).toFixed(2), formatNumber(item.dice), formatNumber(item.iou), formatNumber(item.precision), formatNumber(item.recall)].forEach(value => {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    });
+                    els.thresholdScanTableBody.appendChild(row);
+                });
+            }
+            if (els.thresholdScanTableWrap) els.thresholdScanTableWrap.style.display = 'block';
+            showToast(`阈值扫描完成，最佳 Dice ${formatNumber(data.best_dice)}`, 'success');
+        } catch (error) {
+            if (els.thresholdScanStatus) els.thresholdScanStatus.textContent = '扫描失败';
+            showToast(`阈值扫描失败: ${error.message}`, 'error');
+        } finally {
+            if (els.btnThresholdScan) {
+                els.btnThresholdScan.disabled = false;
+                els.btnThresholdScan.textContent = '📊 批量测试阈值';
             }
         }
     }
@@ -783,19 +1011,16 @@
 
         // Linked Weights
         if (els.cfgBceWeight && els.cfgDiceWeight) {
-            els.cfgBceWeight.addEventListener('input', (e) => {
-                const val = parseFloat(e.target.value);
-                const diceVal = (1.0 - val).toFixed(2);
-                els.cfgDiceWeight.value = diceVal;
-                if (els.cfgBceWeightValue) els.cfgBceWeightValue.textContent = val;
-                if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = diceVal;
-            });
-            els.cfgDiceWeight.addEventListener('input', (e) => {
-                const val = parseFloat(e.target.value);
-                const bceVal = (1.0 - val).toFixed(2);
-                els.cfgBceWeight.value = bceVal;
-                if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = val;
-                if (els.cfgBceWeightValue) els.cfgBceWeightValue.textContent = bceVal;
+            els.cfgBceWeight.addEventListener('input', () => updateRegionWeights('bce'));
+            els.cfgDiceWeight.addEventListener('input', () => updateRegionWeights('dice'));
+        }
+        if (els.cfgClDiceWeight) {
+            els.cfgClDiceWeight.addEventListener('input', () => updateRegionWeights('bce'));
+        }
+        if (els.cfgModelName) {
+            els.cfgModelName.addEventListener('change', () => {
+                updateModelSpecificControls(els.cfgModelName.value);
+                updateRegionWeights('bce');
             });
         }
 
@@ -834,6 +1059,11 @@
 
         if (els.btnRunInference) {
             els.btnRunInference.addEventListener('click', runInference);
+        }
+        if (els.btnThresholdScan) els.btnThresholdScan.addEventListener('click', scanThresholds);
+        if (els.infProcessing) {
+            els.infProcessing.addEventListener('change', updateProcessingHint);
+            updateProcessingHint();
         }
 
         if (els.infThreshold) {

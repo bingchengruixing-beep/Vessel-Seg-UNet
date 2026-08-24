@@ -142,3 +142,15 @@ mask = seg.predict('path/to/angiogram.png')
 | M3 训练工程师 | 损失/训练循环 | `losses.py`, `trainer.py` |
 | M4 评测工程师 | 指标与可视化 | `metrics.py`, `visualize.py` |
 | M5 部署工程师 | 推理与后处理 | `postprocess.py`, `inference.py` |
+
+## united 分支整合功能
+
+本分支以最新 `main` 为基础，整合了当前项目的模型与网页功能，并保留高级损失和训练稳定性改进：
+
+- 新增 `unet_resnet`、`resunet_aspp` 和 `vessel_fusion` 模型，兼容普通输出、深监督输出及旧版裸权重。
+- 支持前景 Patch 训练和重叠滑窗推理。网页仅在 `ResUNet-ASPP` 或 `VesselFusion` 模型下显示 Patch 设置，普通模型不会显示无关选项。
+- 支持弹性形变开关、每批次训练日志、自动查找多个 checkpoint 目录、单图和批量推理，以及验证集阈值扫描。
+- 保留 Focal Tversky、clDice、Zhang-Suen 骨架监督、EMA、Warmup、梯度裁剪和固定随机种子。
+- `实验资料/data-split-train/` 收纳成员数据划分实验的配置、报告、源码和部署权重，仅作为可复现实验资料，不覆盖主项目核心代码。
+
+阈值扫描结果用于验证集部署校准；不同数据划分或外部测试集的 Dice 不应直接混用比较。

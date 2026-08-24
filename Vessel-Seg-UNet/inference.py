@@ -9,10 +9,10 @@ import cv2
 import numpy as np
 import torch
 
-from src.checkpoints import checkpoint_model_config, load_checkpoint, load_model_state
+from src.checkpoints import checkpoint_model_config, infer_legacy_model_name, load_checkpoint, load_model_state
 from src.config import normalize_config
-from src.models import build_model
-from src.prediction import predictions_from_logits
+from src.models import build_model_from_config
+from src.prediction import main_logits_from_output, postprocess_predictions
 from src.transforms import get_val_transforms
 
 
@@ -22,6 +22,7 @@ def restore_original_geometry(
     original_w: int,
     img_size: int,
     keep_aspect_ratio: bool,
+    interpolation: int = cv2.INTER_NEAREST,
 ) -> np.ndarray:
     """撤销预处理中的等比例缩放 + 居中补零（letterbox），还原到原图几何。
 
@@ -36,7 +37,7 @@ def restore_original_geometry(
         left = (img_size - resized_w) // 2
         mask = mask[top:top + resized_h, left:left + resized_w]
     if mask.shape != (original_h, original_w):
-        mask = cv2.resize(mask, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
+        mask = cv2.resize(mask, (original_w, original_h), interpolation=interpolation)
     return mask
 
 
@@ -57,14 +58,15 @@ class VesselSegmentor:
         self.checkpoint = load_checkpoint(model_path, map_location=self.device)
         saved_config = self.checkpoint.get("config")
         self.config = normalize_config(saved_config if isinstance(saved_config, dict) else config)
+        if not isinstance(saved_config, dict):
+            detected_name = infer_legacy_model_name(self.checkpoint)
+            if detected_name:
+                self.config["model"]["name"] = detected_name
+                self.config["model"]["pretrained"] = False
         model_cfg = checkpoint_model_config(self.checkpoint, self.config)
         if model_name is not None:
             model_cfg["name"] = model_name
-        self.model = build_model(
-            model_cfg["name"],
-            in_channels=model_cfg["in_channels"],
-            out_channels=model_cfg["out_channels"],
-        )
+        self.model = build_model_from_config(model_cfg)
         load_model_state(self.model, self.checkpoint)
         self.model.to(self.device).eval()
 
@@ -76,6 +78,7 @@ class VesselSegmentor:
         if min_component_size is not None:
             self.postprocess_config["min_component_size"] = min_component_size
         self.transform = get_val_transforms(self.img_size, self.keep_aspect_ratio)
+        self.patch_config = dict(inference_cfg.get("patch", {}))
 
     @torch.no_grad()
     def predict(self, image_path: str) -> np.ndarray:
@@ -93,21 +96,71 @@ class VesselSegmentor:
         if image.ndim != 2:
             raise ValueError("predict_array expects a two-dimensional grayscale image")
         original_h, original_w = image.shape
-        tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
-        predictions = predictions_from_logits(
-            self.model(tensor),
-            threshold=float(self.threshold),
-            apply_postprocess=bool(self.postprocess_config["enabled"]),
-            postprocess_config=self.postprocess_config,
-        )
-        mask = predictions[0, 0].cpu().numpy().astype(np.uint8) * 255
-        mask = self._restore_original_geometry(mask, original_h, original_w)
-        return mask
+        probabilities = self.predict_probability_array(image)
+        predictions = torch.from_numpy((probabilities > float(self.threshold)).astype(np.float32))[None, None]
+        if self.postprocess_config["enabled"]:
+            predictions = postprocess_predictions(predictions, self.postprocess_config)
+        return predictions[0, 0].numpy().astype(np.uint8) * 255
 
-    def _restore_original_geometry(self, mask: np.ndarray, original_h: int, original_w: int) -> np.ndarray:
+    @torch.no_grad()
+    def predict_probability_array(self, image: np.ndarray) -> np.ndarray:
+        """返回与原图同尺寸的概率图，支持整图和重叠 patch 两种模式。"""
+        if image.ndim != 2:
+            raise ValueError("predict_probability_array expects a two-dimensional grayscale image")
+        original_h, original_w = image.shape
+        if self.patch_config.get("enabled", False):
+            return self._predict_sliding(image)
+        tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
+        with torch.inference_mode():
+            probabilities = torch.sigmoid(main_logits_from_output(self.model(tensor)))
+        return self._restore_original_geometry(
+            probabilities[0, 0].detach().cpu().numpy(),
+            original_h,
+            original_w,
+            cv2.INTER_LINEAR,
+        )
+
+    def _predict_sliding(self, image: np.ndarray) -> np.ndarray:
+        """以重叠 patch 推理并对重叠区域平均概率。"""
+        size = int(self.patch_config.get("size", self.img_size))
+        stride = int(self.patch_config.get("stride", max(size // 2, 1)))
+        if stride <= 0 or stride > size:
+            raise ValueError("inference.patch.stride 必须在 1 到 patch.size 之间")
+        height, width = image.shape
+        padded_height = max(height, size)
+        padded_width = max(width, size)
+        padded = np.zeros((padded_height, padded_width), dtype=image.dtype)
+        padded[:height, :width] = image
+        rows = self._sliding_positions(padded_height, size, stride)
+        cols = self._sliding_positions(padded_width, size, stride)
+        probability_sum = np.zeros((padded_height, padded_width), dtype=np.float32)
+        visit_count = np.zeros((padded_height, padded_width), dtype=np.float32)
+        transform = get_val_transforms(size, keep_aspect_ratio=False)
+        with torch.inference_mode():
+            for top in rows:
+                for left in cols:
+                    patch = padded[top:top + size, left:left + size]
+                    tensor = transform(image=patch)["image"].unsqueeze(0).to(self.device)
+                    prediction = torch.sigmoid(main_logits_from_output(self.model(tensor)))
+                    probability = prediction[0, 0].detach().cpu().numpy()
+                    probability_sum[top:top + size, left:left + size] += probability
+                    visit_count[top:top + size, left:left + size] += 1.0
+        return probability_sum[:height, :width] / np.maximum(visit_count[:height, :width], 1.0)
+
+    @staticmethod
+    def _sliding_positions(length: int, size: int, stride: int) -> list[int]:
+        if length <= size:
+            return [0]
+        positions = list(range(0, length - size + 1, stride))
+        last = length - size
+        if positions[-1] != last:
+            positions.append(last)
+        return positions
+
+    def _restore_original_geometry(self, mask: np.ndarray, original_h: int, original_w: int, interpolation: int = cv2.INTER_NEAREST) -> np.ndarray:
         """Remove validation/inference padding before resizing the prediction back."""
         return restore_original_geometry(
-            mask, original_h, original_w, self.img_size, self.keep_aspect_ratio
+            mask, original_h, original_w, self.img_size, self.keep_aspect_ratio, interpolation
         )
 
     @torch.no_grad()

@@ -1,19 +1,26 @@
-# All paths are relative to the project root unless they are absolute data paths.
 dataset:
   img_size: 512
   num_workers: 0
   pin_memory: true
   keep_aspect_ratio: true
+  augmentation:
+    elastic_transform: false
+  patch:
+    enabled: false
+    size: 640
+    foreground_probability: 0.7
+    min_foreground_ratio: 0.002
   train_image_dir: data/train/images
   train_mask_dir: data/train/masks
   val_image_dir: data/val/images
   val_mask_dir: data/val/masks
-
 model:
   name: unet_baseline
   in_channels: 1
   out_channels: 1
-
+  encoder_name: resnet34
+  pretrained: true
+  deep_supervision: true
 training:
   batch_size: 1
   epochs: 100
@@ -30,9 +37,10 @@ training:
     name: BCEDiceLoss
     bce_weight: 0.5
     dice_weight: 0.5
-    dice_smooth: 0.000001
-    # 大于 0 时启用 clDice 中心线监督(数据集会额外返回骨架)
+    dice_smooth: 1.0e-06
     cl_dice_weight: 0.0
+    cldice_weight: 0.0
+    skeleton_iterations: 5
     focal_tversky:
       alpha: 0.7
       beta: 0.3
@@ -40,20 +48,19 @@ training:
   early_stopping:
     patience: 10
   checkpoint:
-    # This directory is intentionally restricted to a project-relative location.
     save_dir: checkpoints
     save_best_only: true
     save_interval: 10
-
 evaluation:
   threshold: 0.5
-  # Enable this to measure the exact masks produced in deployment.
   apply_postprocess: false
-
 inference:
   threshold: 0.5
-  # null inherits dataset.img_size, which avoids a silent training/inference mismatch.
   img_size: null
+  patch:
+    enabled: false
+    size: 640
+    stride: 480
   postprocess:
     enabled: true
     min_component_size: 50

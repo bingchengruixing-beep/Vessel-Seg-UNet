@@ -18,7 +18,7 @@ from src.checkpoints import checkpoint_model_config, load_checkpoint, load_model
 from src.config import load_config, normalize_config, resolve_data_path
 from src.dataset import VesselDataset
 from src.metrics import calculate_dice, calculate_iou, calculate_precision, calculate_recall
-from src.models import build_model
+from src.models import build_model_from_config
 from src.prediction import predictions_from_logits
 from src.transforms import get_val_transforms
 from src.visualize import save_overlay_image
@@ -58,11 +58,7 @@ def main():
     runtime_config = normalize_config(saved_config) if isinstance(saved_config, dict) else data_config
     model_cfg = checkpoint_model_config(checkpoint, runtime_config)
 
-    model = build_model(
-        model_cfg["name"],
-        in_channels=model_cfg["in_channels"],
-        out_channels=model_cfg["out_channels"],
-    ).to(device)
+    model = build_model_from_config(model_cfg).to(device)
     load_model_state(model, checkpoint)
     model.eval()
 
