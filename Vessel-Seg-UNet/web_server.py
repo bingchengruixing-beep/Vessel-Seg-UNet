@@ -684,6 +684,14 @@ def threshold_scan():
                 mask = cv2.imdecode(mask_buffer, cv2.IMREAD_GRAYSCALE)
                 if mask is None:
                     raise OSError(f"无法读取验证掩膜: {filename}")
+                # 与 VesselDataset 保持一致：原图与标注尺寸不同时先用最近邻对齐。
+                image_height, image_width = image.shape[:2]
+                if mask.shape != (image_height, image_width):
+                    mask = cv2.resize(
+                        mask,
+                        (image_width, image_height),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
                 probability_array, segmentor = _predict_ensemble_probability(
                     image, checkpoint_names
                 )

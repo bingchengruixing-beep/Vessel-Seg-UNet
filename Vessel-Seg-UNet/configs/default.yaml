@@ -36,7 +36,7 @@ dataset:
   cross_validation:
     enabled: true
     num_folds: 3
-    fold_index: 2
+    fold_index: 0
   temporal_2_5d:
     enabled: false
   train_image_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\normal
