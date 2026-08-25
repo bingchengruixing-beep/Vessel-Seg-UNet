@@ -1,6 +1,12 @@
 import torch
 
-from src.checkpoints import checkpoint_model_config, load_checkpoint, load_model_state, save_checkpoint
+from src.checkpoints import (
+    checkpoint_model_config,
+    infer_legacy_in_channels,
+    load_checkpoint,
+    load_model_state,
+    save_checkpoint,
+)
 from src.config import normalize_config
 
 
@@ -27,3 +33,13 @@ def test_versioned_checkpoint_round_trip(tmp_path):
     assert checkpoint["epoch"] == 2
     assert checkpoint_model_config(checkpoint, config)["name"] == "unet_baseline"
     assert all(torch.equal(a, b) for a, b in zip(source_model.parameters(), target_model.parameters()))
+
+
+def test_legacy_input_channels_are_inferred_from_first_convolution():
+    checkpoint = {
+        "model_state_dict": {
+            "conv1.weight": torch.zeros(64, 3, 7, 7),
+            "head.weight": torch.zeros(1, 16, 1, 1),
+        }
+    }
+    assert infer_legacy_in_channels(checkpoint) == 3

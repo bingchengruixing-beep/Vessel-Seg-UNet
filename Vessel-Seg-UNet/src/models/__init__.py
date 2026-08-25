@@ -7,13 +7,41 @@ import torch.nn as nn
 
 from src.models.unet import UNetBaseline
 from src.models.attention_unet import AttentionUNet
+from src.models.unet_resnet import UNetResNet
+from src.models.resunet_aspp import ResUNetASPP
+from src.models.vessel_fusion import VesselFusion
 
 
 # 模型注册表
 _MODEL_REGISTRY = {
     'unet_baseline': UNetBaseline,
     'attention_unet': AttentionUNet,
+    'unet_resnet': UNetResNet,
+    'resunet_aspp': ResUNetASPP,
+    'vessel_fusion': VesselFusion,
 }
+
+
+def build_model_from_config(model_config: dict) -> nn.Module:
+    """根据配置构建模型并传入对应架构的专属参数。"""
+    model_name = model_config["name"]
+    kwargs = {
+        "in_channels": model_config["in_channels"],
+        "out_channels": model_config["out_channels"],
+    }
+    if model_name == "unet_resnet":
+        kwargs.update(
+            encoder_name=model_config.get("encoder_name", "resnet34"),
+            pretrained=bool(model_config.get("pretrained", True)),
+            temporal_input=model_config.get("input_mode") == "temporal",
+        )
+    elif model_name in {"resunet_aspp", "vessel_fusion"}:
+        kwargs.update(
+            pretrained=bool(model_config.get("pretrained", True)),
+            deep_supervision=bool(model_config.get("deep_supervision", True)),
+            temporal_input=model_config.get("input_mode") == "temporal",
+        )
+    return build_model(model_name, **kwargs)
 
 
 def build_model(model_name: str, **kwargs) -> nn.Module:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import time
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -15,11 +16,12 @@ from tqdm import tqdm
 
 from src.checkpoints import save_checkpoint
 from src.metrics import MetricAccumulator
-from src.prediction import predictions_from_logits
+from src.prediction import main_logits_from_output, predictions_from_logits
 
 
 logger = logging.getLogger(__name__)
 EpochCallback = Callable[[Dict[str, float]], None]
+BatchCallback = Callable[[Dict[str, float]], None]
 StopCallback = Callable[[], bool]
 
 
@@ -37,6 +39,7 @@ class Trainer:
         config: Optional[dict] = None,
         checkpoint_dir: Optional[str | Path] = None,
         on_epoch_end: Optional[EpochCallback] = None,
+        on_batch_end: Optional[BatchCallback] = None,
         should_stop: Optional[StopCallback] = None,
         device: Optional[str | torch.device] = None,
     ):
@@ -65,6 +68,7 @@ class Trainer:
         self.save_dir = Path(checkpoint_dir or checkpoint_cfg["save_dir"])
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.on_epoch_end = on_epoch_end
+        self.on_batch_end = on_batch_end
         self.should_stop = should_stop or (lambda: False)
 
         self.scaler = GradScaler("cuda", enabled=self.use_amp)
@@ -82,21 +86,35 @@ class Trainer:
         self.best_dice = float("-inf")
         self.epochs_no_improve = 0
         self.current_epoch = 0
+        self.deep_supervision_weights = tuple(
+            float(value) for value in train_cfg.get("deep_supervision_weights", [0.3, 0.2])
+        )
 
     def _is_stop_requested(self) -> bool:
         return bool(self.should_stop())
+
+    def _loss_from_output(self, output, masks, skeleton=None):
+        """主输出使用完整损失，辅助输出只使用区域损失以控制计算量。"""
+        if not isinstance(output, (tuple, list)):
+            return self.criterion(output, masks, skeleton)
+        total = self.criterion(output[0], masks, skeleton)
+        for weight, auxiliary in zip(self.deep_supervision_weights, output[1:]):
+            total = total + weight * self.criterion(auxiliary, masks, None)
+        return total
 
     def train_one_epoch(self) -> Optional[float]:
         """Execute one epoch. ``None`` means a stop was requested."""
         self.model.train()
         total_loss = 0.0
         num_batches = 0
+        epoch_start = time.perf_counter()
+        total_batches = len(self.train_loader)
         progress = tqdm(
             self.train_loader,
             desc=f"Epoch {self.current_epoch + 1}/{self.epochs} [Train]",
             leave=False,
         )
-        for batch in progress:
+        for batch_index, batch in enumerate(progress, start=1):
             if self._is_stop_requested():
                 return None
             images, masks = batch[0], batch[1]
@@ -106,9 +124,9 @@ class Trainer:
             if skeleton is not None:
                 skeleton = skeleton.to(self.device, non_blocking=True)
             self.optimizer.zero_grad(set_to_none=True)
-            with autocast("cuda", enabled=self.use_amp):
-                logits = self.model(images)
-                loss = self.criterion(logits, masks, skeleton)
+            with autocast(device_type=self.device.type, enabled=self.use_amp):
+                outputs = self.model(images)
+                loss = self._loss_from_output(outputs, masks, skeleton)
             self.scaler.scale(loss).backward()
             if self.grad_clip > 0:
                 self.scaler.unscale_(self.optimizer)
@@ -121,6 +139,15 @@ class Trainer:
             total_loss += loss.item()
             num_batches += 1
             progress.set_postfix(loss=f"{loss.item():.4f}")
+            if self.on_batch_end and (batch_index % 5 == 0 or batch_index == total_batches):
+                self.on_batch_end({
+                    "epoch": float(self.current_epoch + 1),
+                    "batch": float(batch_index),
+                    "total_batches": float(total_batches),
+                    "batch_loss": float(loss.item()),
+                    "elapsed_seconds": float(time.perf_counter() - epoch_start),
+                    "lr": float(self.optimizer.param_groups[0]["lr"]),
+                })
         if num_batches == 0:
             raise RuntimeError("Training DataLoader produced no batches")
         return total_loss / num_batches
@@ -158,9 +185,10 @@ class Trainer:
             masks = masks.to(self.device, non_blocking=True)
             if skeleton is not None:
                 skeleton = skeleton.to(self.device, non_blocking=True)
-            with autocast("cuda", enabled=self.use_amp):
-                logits = model(images)
-                loss = self.criterion(logits, masks, skeleton)
+            with autocast(device_type=self.device.type, enabled=self.use_amp):
+                outputs = model(images)
+                logits = main_logits_from_output(outputs)
+                loss = self._loss_from_output(outputs, masks, skeleton)
             predictions = predictions_from_logits(
                 logits,
                 threshold=evaluation_cfg["threshold"],

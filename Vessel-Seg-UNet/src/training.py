@@ -42,9 +42,20 @@ def build_criterion(config: dict) -> torch.nn.Module:
             dice_weight=loss_cfg["dice_weight"],
             dice_smooth=loss_cfg["dice_smooth"],
         )
-    cldice_weight = float(loss_cfg.get("cl_dice_weight", 0.0))
+    cldice_weight = float(
+        loss_cfg.get("cl_dice_weight", loss_cfg.get("cldice_weight", 0.0))
+    )
+    if name == "BCEDiceClDiceLoss" and cldice_weight <= 0:
+        cldice_weight = float(loss_cfg.get("cldice_weight", 0.15))
     if cldice_weight > 0:
-        return CombinedVesselLoss(main_loss, CLDiceLoss(), cldice_weight)
+        return CombinedVesselLoss(
+            main_loss,
+            CLDiceLoss(
+                smooth=float(loss_cfg["dice_smooth"]),
+                iters=int(loss_cfg.get("skeleton_iterations", 5)),
+            ),
+            cldice_weight,
+        )
     return main_loss
 
 

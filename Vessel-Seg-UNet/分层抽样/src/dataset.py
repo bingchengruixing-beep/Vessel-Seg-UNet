@@ -1,0 +1,174 @@
+"""
+[M1] 数据集与 DataLoader 定义
+负责图像读取、掩膜二值化清洗、与增强管线对接。
+
+接口契约:
+    VesselDataset.__getitem__ 输出:
+        image: (1, H, W), float32, 值域 [0, 1]
+        mask:  (1, H, W), float32, 值域 {0.0, 1.0}
+
+    get_dataloaders(config) -> (DataLoader, DataLoader)
+
+核心防错:
+    - Mask 必须是 {0.0, 1.0} 的 FloatTensor，绝不是 0~255 的 ByteTensor
+    - Windows 下 num_workers 建议设为 0，避免多进程僵死
+"""
+
+import os
+import cv2
+import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader
+from typing import Optional, Tuple
+
+from src.transforms import get_train_transforms, get_val_transforms
+
+
+class VesselDataset(Dataset):
+    """
+    脑血管造影分割数据集。
+
+    读取 image_dir 下的灰度造影图像和 mask_dir 下的对应掩膜，
+    经 Albumentations 增强后输出标准化的 PyTorch Tensor。
+
+    Args:
+        image_dir: 原始造影图像所在目录
+        mask_dir: 二值掩膜所在目录（文件名需与 image_dir 一一对应）
+        transform: Albumentations Compose 增强管线（可选）
+    """
+
+    SUPPORTED_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+
+    def __init__(
+        self,
+        image_dir,
+        mask_dir,
+        transform=None,
+    ):
+        self.transform = transform
+
+        # 支持单目录（str）或多目录（list）；多目录用于合并多个数据集
+        image_dirs = [image_dir] if isinstance(image_dir, (str, os.PathLike)) else list(image_dir)
+        mask_dirs = [mask_dir] if isinstance(mask_dir, (str, os.PathLike)) else list(mask_dir)
+        if len(image_dirs) != len(mask_dirs):
+            raise ValueError(
+                f"image_dir 与 mask_dir 数量不一致: {len(image_dirs)} vs {len(mask_dirs)}"
+            )
+
+        # 收集所有 image-mask 配对（跨目录时文件名可重名，用完整路径区分）
+        self.samples = []     # [(img_path, mask_path), ...]
+        self.filenames = []   # [fname, ...]（相对文件名，可能与其它目录重名）
+        for img_dir, msk_dir in zip(image_dirs, mask_dirs):
+            for f in sorted(os.listdir(img_dir)):
+                if f.lower().endswith(self.SUPPORTED_EXTS) and os.path.exists(os.path.join(msk_dir, f)):
+                    self.samples.append((os.path.join(img_dir, f), os.path.join(msk_dir, f)))
+                    self.filenames.append(f)
+
+        if len(self.samples) == 0:
+            raise RuntimeError(
+                f"No matched image-mask pairs found in\n"
+                f"  image_dir: {image_dirs}\n"
+                f"  mask_dir:  {mask_dirs}"
+            )
+
+    def __len__(self) -> int:
+        return len(self.filenames)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        读取并返回第 idx 对 (image, mask)。
+
+        Returns:
+            image: (1, H, W), float32, 值域 [0, 1]（经归一化）
+            mask:  (1, H, W), float32, 值域 {0.0, 1.0}
+        """
+        img_path, mask_path = self.samples[idx]
+
+        # ── 读取灰度图像（使用 np.fromfile 支持中文路径）──
+        img_buf = np.fromfile(img_path, dtype=np.uint8)
+        image = cv2.imdecode(img_buf, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise IOError(f"Failed to read image: {img_path}")
+
+        # ── 读取掩膜并二值化 ──
+        mask_buf = np.fromfile(mask_path, dtype=np.uint8)
+        mask = cv2.imdecode(mask_buf, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise IOError(f"Failed to read mask: {mask_path}")
+
+        # 硬阈值二值化：>127 → 255, 其余 → 0
+        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+
+        # ── 数据增强 ──
+        if self.transform is not None:
+            augmented = self.transform(image=image, mask=mask)
+            image = augmented['image']   # (1, H, W) float32
+            mask = augmented['mask']     # (H, W) uint8 or float
+        else:
+            # 手动转 Tensor（无增强时的 fallback）
+            image = torch.from_numpy(image).unsqueeze(0).float() / 255.0
+            mask = torch.from_numpy(mask).unsqueeze(0).float()
+
+        # ── 确保 mask 维度和值域正确 ──
+        if mask.dim() == 2:
+            mask = mask.unsqueeze(0)  # (H, W) → (1, H, W)
+
+        # 强制 {0.0, 1.0} 二值化（防御性处理）
+        mask = (mask > 0.5).float()
+
+        return image, mask
+
+
+def get_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
+    """
+    根据全局配置字典创建训练和验证 DataLoader。
+
+    Args:
+        config: 从 configs/default.yaml 加载的完整配置字典
+
+    Returns:
+        (train_loader, val_loader)
+    """
+    data_cfg = config['data']
+    train_cfg = config['training']
+
+    img_size = data_cfg['img_size']
+    batch_size = train_cfg['batch_size']
+    num_workers = data_cfg.get('num_workers', 0)
+    pin_memory = data_cfg.get('pin_memory', True)
+
+    # 构建增强管线
+    train_transform = get_train_transforms(img_size, strong_aug=data_cfg.get('strong_aug', False))
+    val_transform = get_val_transforms(img_size)
+
+    # 构建数据集
+    train_dataset = VesselDataset(
+        image_dir=data_cfg['train_image_dir'],
+        mask_dir=data_cfg['train_mask_dir'],
+        transform=train_transform,
+    )
+    val_dataset = VesselDataset(
+        image_dir=data_cfg['val_image_dir'],
+        mask_dir=data_cfg['val_mask_dir'],
+        transform=val_transform,
+    )
+
+    # 构建 DataLoader
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=False,
+    )
+
+    return train_loader, val_loader

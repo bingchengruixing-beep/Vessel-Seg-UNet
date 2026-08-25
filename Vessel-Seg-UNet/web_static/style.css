@@ -383,6 +383,14 @@ body {
 }
 .form-row .form-group { flex: 1; }
 
+.path-input-row {
+    display: flex;
+    align-items: stretch;
+    gap: .45rem;
+}
+.path-input-row input { min-width: 0; flex: 1; }
+.path-input-row .btn { flex-shrink: 0; }
+
 input[type="text"],
 input[type="number"],
 select {
@@ -606,4 +614,7 @@ input:focus, select:focus {
     .sys-grid { grid-template-columns: 1fr; }
     .sys-card-wide { grid-column: span 1; }
     .config-grid { grid-template-columns: 1fr; }
+}
+.checkpoint-multi-select {
+    min-height: 112px;
 }

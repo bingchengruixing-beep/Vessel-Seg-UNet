@@ -78,6 +78,41 @@ def load_model_state(model: torch.nn.Module, checkpoint: Mapping[str, Any]) -> N
     model.load_state_dict(checkpoint["model_state_dict"])
 
 
+def infer_legacy_model_name(checkpoint: Mapping[str, Any]) -> str | None:
+    """根据旧版裸 state_dict 的层名推断真实模型结构。"""
+    state_dict = checkpoint.get("model_state_dict")
+    if not isinstance(state_dict, Mapping):
+        return None
+    keys = tuple(str(key) for key in state_dict.keys())
+    if any(key.startswith("final_refine.") for key in keys):
+        return "vessel_fusion"
+    if any(key.startswith("aspp.") or key.startswith("x3_1.") for key in keys):
+        return "resunet_aspp"
+    if any(key.startswith("dec4.") for key in keys):
+        return "unet_resnet"
+    return None
+
+
+def infer_legacy_in_channels(checkpoint: Mapping[str, Any]) -> int | None:
+    """从旧版裸 state_dict 的第一层卷积识别输入通道数。"""
+    state_dict = checkpoint.get("model_state_dict")
+    if not isinstance(state_dict, Mapping):
+        return None
+    preferred_keys = (
+        "conv1.weight",
+        "enc1.block.0.weight",
+        "encoder1.block.0.weight",
+    )
+    for key in preferred_keys:
+        weight = state_dict.get(key)
+        if isinstance(weight, torch.Tensor) and weight.ndim == 4:
+            return int(weight.shape[1])
+    for key, weight in state_dict.items():
+        if str(key).endswith("weight") and isinstance(weight, torch.Tensor) and weight.ndim == 4:
+            return int(weight.shape[1])
+    return None
+
+
 def checkpoint_model_config(
     checkpoint: Mapping[str, Any], fallback_config: Mapping[str, Any]
 ) -> dict[str, Any]:

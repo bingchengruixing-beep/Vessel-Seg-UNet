@@ -1,0 +1,13 @@
+# 外部盲测配置（unet_resnet + resnet50）：DIAS-val（20 张，纯未见，不含 DIAS-train）
+data:
+  val_image_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/images"
+  val_mask_dir: "C:/Users/13091/Desktop/数据集/开源数据集；DIAS/val/masks"
+  img_size: 512
+  num_workers: 0
+  pin_memory: true
+
+model:
+  name: "unet_resnet"
+  encoder_name: "resnet50"
+  in_channels: 1
+  out_channels: 1
