@@ -1,0 +1,28 @@
+stage,exp_id,dataset,model,loss,eval_mode,dice_mean,dice_std,iou_mean,iou_std,precision_mean,precision_std,recall_mean,recall_std,best_dice,epochs,note
+pre,exp1_baseline,DIAS(50),unet_baseline,BCEDice,raw,0.6861,0.0848,0.5277,0.0857,0.7477,0.0734,0.6609,0.1355,0.6823,45,early stop
+pre,exp1_baseline,DIAS(50),unet_baseline,BCEDice,postprocess,0.6648,0.0860,0.5033,0.0838,0.7092,0.0798,0.6584,0.1414,0.6823,45,early stop
+pre,exp2_focal_tversky,DIAS(50),unet_baseline,FocalTversky,raw,0.6855,0.0561,0.5242,0.0641,0.6441,0.1015,0.7577,0.0959,0.6802,51,early stop
+pre,exp2_focal_tversky,DIAS(50),unet_baseline,FocalTversky,postprocess,0.6609,0.0582,0.4963,0.0642,0.6037,0.1012,0.7590,0.0991,0.6802,51,early stop
+pre,exp3_cl_dice,DIAS(50),unet_baseline,BCEDice+clDice,raw,0.7029,0.0445,0.5436,0.0517,0.7056,0.0703,0.7159,0.0957,0.6995,52,early stop
+pre,exp3_cl_dice,DIAS(50),unet_baseline,BCEDice+clDice,postprocess,0.6830,0.0471,0.5205,0.0530,0.6579,0.0749,0.7301,0.1015,0.6995,52,early stop
+pre,exp4_attn_focal_cldice,DIAS(50),attention_unet,FocalTversky+clDice,raw,0.6699,0.0493,0.5057,0.0552,0.6133,0.0806,0.7617,0.1050,0.6660,51,interrupted by system sleep
+pre,exp4_attn_focal_cldice,DIAS(50),attention_unet,FocalTversky+clDice,postprocess,0.6479,0.0517,0.4813,0.0563,0.5718,0.0803,0.7726,0.1053,0.6660,51,interrupted by system sleep
+main,exp5_own_baseline,own(177),unet_baseline,BCEDice,raw,0.7593,0.0427,0.6138,0.0539,0.7750,0.0823,0.7644,0.1024,0.7570,25,early stop
+main,exp5_own_baseline,own(177),unet_baseline,BCEDice,postprocess,0.7455,0.0387,0.5957,0.0486,0.7386,0.0893,0.7753,0.1005,0.7570,25,early stop
+main,exp5_own_cl_dice,own(177),unet_baseline,BCEDice+clDice,raw,0.7730,0.0464,0.6321,0.0572,0.7750,0.0771,0.7904,0.1022,0.7683,35,early stop,recommended
+main,exp5_own_cl_dice,own(177),unet_baseline,BCEDice+clDice,postprocess,0.7584,0.0426,0.6126,0.0528,0.7368,0.0854,0.8035,0.1001,0.7683,35,early stop,recommended
+cross,exp5_own_baseline_on_dias,own->DIAS,unet_baseline,BCEDice,raw,0.6340,0.1075,0.4729,0.1112,0.5725,0.1822,0.8010,0.1154,,,cross-domain
+cross,exp5_own_cl_dice_on_dias,own->DIAS,unet_baseline,BCEDice+clDice,raw,0.6463,0.0955,0.4844,0.0999,0.5559,0.1478,0.8325,0.0838,,,cross-domain
+cross,exp3_cl_dice_on_own,DIAS->own,unet_baseline,BCEDice+clDice,raw,0.7059,0.0786,0.5510,0.0907,0.8140,0.0803,0.6474,0.1369,,,cross-domain
+subgroup,exp5_own_baseline,d1_2-3s(7),unet_baseline,BCEDice,raw,0.7480,,0.5975,,0.8034,,0.6998,,,,
+subgroup,exp5_own_baseline,d1_4s(5),unet_baseline,BCEDice,raw,0.7926,,0.6565,,0.7616,,0.8263,,,,
+subgroup,exp5_own_baseline,d1_5-6s(4),unet_baseline,BCEDice,raw,0.6890,,0.5256,,0.7356,,0.6481,,,,
+subgroup,exp5_own_baseline,d2(11),unet_baseline,BCEDice,raw,0.7771,,0.6355,,0.7616,,0.7933,,,,
+subgroup,exp5_own_cl_dice,d1_2-3s(7),unet_baseline,BCEDice+clDice,raw,0.7765,,0.6346,,0.8005,,0.7538,,,,
+subgroup,exp5_own_cl_dice,d1_4s(5),unet_baseline,BCEDice+clDice,raw,0.7991,,0.6655,,0.7576,,0.8454,,,,
+subgroup,exp5_own_cl_dice,d1_5-6s(4),unet_baseline,BCEDice+clDice,raw,0.6887,,0.5252,,0.7513,,0.6357,,,,
+subgroup,exp5_own_cl_dice,d2(11),unet_baseline,BCEDice+clDice,raw,0.7891,,0.6516,,0.7621,,0.8179,,,,
+subgroup,exp3_cl_dice_cross,d1_2-3s(7),unet_baseline,BCEDice+clDice,raw,0.6479,,0.4792,,0.8109,,0.5395,,,,
+subgroup,exp3_cl_dice_cross,d1_4s(5),unet_baseline,BCEDice+clDice,raw,0.7847,,0.6456,,0.7911,,0.7783,,,,
+subgroup,exp3_cl_dice_cross,d1_5-6s(4),unet_baseline,BCEDice+clDice,raw,0.6360,,0.4663,,0.7663,,0.5436,,,,
+subgroup,exp3_cl_dice_cross,d2(11),unet_baseline,BCEDice+clDice,raw,0.7350,,0.5811,,0.8224,,0.6644,,,,

@@ -2,6 +2,8 @@
 /.venv
 /advanced_smooth.py
 /checkpoints
+/data
+/dataset
 /dataset1
 /dataset2（4s）
 /experiment.py

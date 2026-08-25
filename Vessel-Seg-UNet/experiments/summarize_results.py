@@ -61,7 +61,8 @@ def fmt(value):
     return f"{value:.4f}"
 
 
-lines = ["# 全量对比实验结果", ""]
+lines = ["# 预实验报告(DIAS 开源于集)—— 非最终数据", ""]
+lines.append("> ⚠️ 本报告对应预实验阶段使用的 DIAS 开源于集(50 对);正式完整数据集(177 对自有标注)见 RESULTS.md\n")
 lines.append("> 数据集: DIAS(train 30 / val 20,800×800 灰度 DSA,前景占比 ~6%)\n")
 lines.append("> 训练策略(全部一致): AdamW lr=1e-4、warmup 5 + cosine、grad clip 1.0、EMA 0.999、seed 42、AMP、batch 2、早停 patience 10\n")
 

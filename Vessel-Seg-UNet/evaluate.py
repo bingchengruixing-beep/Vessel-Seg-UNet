@@ -62,16 +62,19 @@ def main():
         model_cfg["name"],
         in_channels=model_cfg["in_channels"],
         out_channels=model_cfg["out_channels"],
+        phase_classes=model_cfg.get("phase_classes", 0),
     ).to(device)
     load_model_state(model, checkpoint)
     model.eval()
 
     img_size = runtime_config["inference"]["img_size"] or runtime_config["dataset"]["img_size"]
+    phase_condition = bool(runtime_config["training"].get("phase_condition", False))
     dataset_cfg = data_config["dataset"]
     val_dataset = VesselDataset(
         image_dir=str(resolve_data_path(dataset_cfg["val_image_dir"], ROOT_DIR)),
         mask_dir=str(resolve_data_path(dataset_cfg["val_mask_dir"], ROOT_DIR)),
         transform=get_val_transforms(img_size, runtime_config["dataset"]["keep_aspect_ratio"]),
+        return_phase=phase_condition,
     )
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=dataset_cfg["num_workers"])
 
@@ -82,10 +85,13 @@ def main():
     metric_values = {"dice": [], "iou": [], "precision": [], "recall": []}
     os.makedirs(args.output_dir, exist_ok=True)
     with torch.no_grad():
-        for index, (images, masks) in enumerate(tqdm(val_loader, desc="Evaluating")):
-            images, masks = images.to(device), masks.to(device)
+        for index, batch in enumerate(tqdm(val_loader, desc="Evaluating")):
+            images, masks = batch[0].to(device), batch[1].to(device)
+            phase = batch[-1].to(device) if phase_condition else None
+            output = model(images, phase)
+            logits = output[0] if isinstance(output, tuple) else output
             predictions = predictions_from_logits(
-                model(images),
+                logits,
                 threshold=threshold,
                 apply_postprocess=apply_postprocess,
                 postprocess_config=runtime_config["inference"]["postprocess"],

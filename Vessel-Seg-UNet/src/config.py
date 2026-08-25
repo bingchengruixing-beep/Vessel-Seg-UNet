@@ -15,6 +15,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "num_workers": 0,
         "pin_memory": True,
         "keep_aspect_ratio": True,
+        # clDice 金标准骨架的计算分辨率(最长边),拓扑损失对分辨率不敏感,256 可大幅提速
+        "skeleton_size": 256,
         "train_image_dir": "data/train/images",
         "train_mask_dir": "data/train/masks",
         "val_image_dir": "data/val/images",
@@ -37,6 +39,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "warmup_epochs": 5,
         "grad_clip": 1.0,
         "ema_decay": 0.999,
+        # FiLM 相位条件化与相位分类辅助损失
+        "phase_condition": False,
+        "phase_loss_weight": 0.0,
         "loss": {
             "name": "BCEDiceLoss",
             "bce_weight": 0.5,
@@ -159,10 +164,13 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _nonnegative_int(dataset.get("num_workers"), "dataset.num_workers")
     if not isinstance(dataset.get("keep_aspect_ratio"), bool):
         raise ConfigError("dataset.keep_aspect_ratio must be boolean")
+    _positive_int(dataset.get("skeleton_size"), "dataset.skeleton_size")
     _positive_int(model.get("in_channels"), "model.in_channels")
     _positive_int(model.get("out_channels"), "model.out_channels")
     if model.get("name") not in {"unet_baseline", "attention_unet"}:
         raise ConfigError("model.name must be 'unet_baseline' or 'attention_unet'")
+    if model.get("phase_classes") is not None:
+        _positive_int(model["phase_classes"], "model.phase_classes")
 
     _positive_int(training.get("batch_size"), "training.batch_size")
     _positive_int(training.get("epochs"), "training.epochs")
@@ -173,6 +181,9 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _nonnegative_float(training.get("grad_clip"), "training.grad_clip")
     if not isinstance(training.get("ema_decay"), (int, float)) or not 0.0 <= float(training["ema_decay"]) < 1.0:
         raise ConfigError("training.ema_decay must be in [0, 1)")
+    if not isinstance(training.get("phase_condition"), bool):
+        raise ConfigError("training.phase_condition must be boolean")
+    _nonnegative_float(training.get("phase_loss_weight"), "training.phase_loss_weight")
     if str(training.get("optimizer", "")).lower() not in {"adam", "adamw", "sgd"}:
         raise ConfigError("training.optimizer must be adam, adamw, or sgd")
     if str(training.get("scheduler", "")).lower() not in {"cosine", "plateau", "step", "none"}:

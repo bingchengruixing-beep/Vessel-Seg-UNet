@@ -84,6 +84,33 @@ class Up(nn.Module):
         return self.conv(x)
 
 
+class FiLMBlock(nn.Module):
+    """
+    FiLM 相位条件化: 对编码器各级特征做逐通道缩放+平移 (1+dγ)·x + dβ。
+
+    相位经 Embedding → 小 MLP 产生每级 2C 维修正量; dγ/dβ 零初始化,
+    因此 phase=None 或训练初期等价于恒等映射(无条件网络)。
+    """
+
+    def __init__(self, num_classes: int, channels: list, emb_dim: int = 32):
+        super().__init__()
+        self.num_classes = num_classes
+        self.emb = nn.Embedding(num_classes, emb_dim)
+        self.layers = nn.ModuleList()
+        for channels_stage in channels:
+            layer = nn.Linear(emb_dim, channels_stage * 2)
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+            self.layers.append(layer)
+
+    def forward(self, x: torch.Tensor, phase: torch.Tensor, stage: int) -> torch.Tensor:
+        if phase is None:
+            return x
+        h = self.layers[stage](self.emb(phase))          # (B, 2C)
+        dgamma, dbeta = h.chunk(2, dim=1)                 # 各 (B, C)
+        return x * (1.0 + dgamma.view(x.shape[0], -1, 1, 1)) + dbeta.view(x.shape[0], -1, 1, 1)
+
+
 class UNetBaseline(nn.Module):
     """
     经典 U-Net：4 层编码 + 4 层解码 + Skip Connection
@@ -103,11 +130,13 @@ class UNetBaseline(nn.Module):
         in_channels: int = 1,
         out_channels: int = 1,
         bilinear: bool = True,
+        phase_classes: int = 0,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.bilinear = bilinear
+        self.phase_classes = int(phase_classes)
 
         # 编码器
         self.inc = DoubleConv(in_channels, 64)
@@ -127,22 +156,61 @@ class UNetBaseline(nn.Module):
         # ⚠️ 不加 Sigmoid，输出 raw logits
         self.outc = nn.Conv2d(64, out_channels, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 相位条件化(可选)
+        self.film = None
+        self.phase_encoder = None
+        if self.phase_classes > 0:
+            self.film = FiLMBlock(self.phase_classes, [64, 128, 256, 512])
+            # 独立相位编码器: 直接吃原始图像。骨干在 FiLM 训练下会学成相位不变
+            # 特征, 接在骨干上的分类头无特征可学; 专用分支与 FiLM 完全解耦。
+            # 各时相全局统计接近, 差异在局部对比模式 → 需要多层卷积感受野;
+            # 用 GroupNorm 替代 BN: 小 batch 微调时无 running-stats 不稳定问题。
+            self.phase_encoder = nn.Sequential(
+                nn.Conv2d(in_channels, 16, kernel_size=3, stride=2, padding=1),
+                nn.GroupNorm(4, 16),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
+                nn.GroupNorm(4, 32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+                nn.GroupNorm(8, 64),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(64, self.phase_classes),
+            )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        phase: torch.Tensor | None = None,
+    ):
         """
         前向传播。
 
         Args:
             x: (Batch, 1, H, W), float32
+            phase: (Batch,) LongTensor 相位 id; None = 不施加条件(FiLM 恒等)
 
         Returns:
-            logits: (Batch, 1, H, W), float32, 未经过激活函数
+            phase_classes == 0: logits (B, 1, H, W)
+            phase_classes > 0: (logits, phase_logits (B, C))
         """
+        x_input = x
         # 编码器路径（保存 skip features）
         x1 = self.inc(x)       # (B, 64, H, W)
+        if self.film is not None:
+            x1 = self.film(x1, phase, 0)
         x2 = self.down1(x1)    # (B, 128, H/2, W/2)
+        if self.film is not None:
+            x2 = self.film(x2, phase, 1)
         x3 = self.down2(x2)    # (B, 256, H/4, W/4)
+        if self.film is not None:
+            x3 = self.film(x3, phase, 2)
         x4 = self.down3(x3)    # (B, 512, H/8, W/8)
-        x5 = self.down4(x4)    # (B, 1024, H/16, W/16) — bottleneck
+        if self.film is not None:
+            x4 = self.film(x4, phase, 3)
+        x5 = self.down4(x4)    # (B, 1024/factor, H/16, W/16) — bottleneck
 
         # 解码器路径（使用 skip connections）
         x = self.up1(x5, x4)   # (B, 512, H/8, W/8)
@@ -151,4 +219,6 @@ class UNetBaseline(nn.Module):
         x = self.up4(x, x1)    # (B, 64, H, W)
 
         logits = self.outc(x)  # (B, 1, H, W) — raw logits
+        if self.phase_encoder is not None:
+            return logits, self.phase_encoder(x_input)
         return logits

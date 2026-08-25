@@ -70,6 +70,9 @@ class Trainer:
         self.scaler = GradScaler("cuda", enabled=self.use_amp)
         self.grad_clip = float(train_cfg.get("grad_clip", 0.0))
         self.ema_decay = float(train_cfg.get("ema_decay", 0.0))
+        self.phase_condition = bool(train_cfg.get("phase_condition", False))
+        self.phase_loss_weight = float(train_cfg.get("phase_loss_weight", 0.0))
+        self.phase_criterion = nn.CrossEntropyLoss()
         self.use_ema = 0.0 < self.ema_decay < 1.0
         self.ema_model = None
         if self.use_ema:
@@ -100,15 +103,29 @@ class Trainer:
             if self._is_stop_requested():
                 return None
             images, masks = batch[0], batch[1]
-            skeleton = batch[2] if len(batch) == 3 else None
+            if self.phase_condition:
+                phase = batch[-1]
+                skeleton = batch[2] if len(batch) == 4 else None
+            else:
+                phase = None
+                skeleton = batch[2] if len(batch) == 3 else None
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
             if skeleton is not None:
                 skeleton = skeleton.to(self.device, non_blocking=True)
+            if phase is not None:
+                phase = phase.to(self.device, non_blocking=True)
             self.optimizer.zero_grad(set_to_none=True)
             with autocast("cuda", enabled=self.use_amp):
-                logits = self.model(images)
-                loss = self.criterion(logits, masks, skeleton)
+                output = self.model(images, phase)
+                if isinstance(output, tuple):
+                    logits, phase_logits = output
+                    loss = self.criterion(logits, masks, skeleton)
+                    if phase is not None and self.phase_loss_weight > 0:
+                        loss = loss + self.phase_loss_weight * self.phase_criterion(phase_logits, phase)
+                else:
+                    logits = output
+                    loss = self.criterion(logits, masks, skeleton)
             self.scaler.scale(loss).backward()
             if self.grad_clip > 0:
                 self.scaler.unscale_(self.optimizer)
@@ -153,14 +170,26 @@ class Trainer:
             if self._is_stop_requested():
                 return None
             images, masks = batch[0], batch[1]
-            skeleton = batch[2] if len(batch) == 3 else None
+            if self.phase_condition:
+                phase = batch[-1]
+                skeleton = batch[2] if len(batch) == 4 else None
+            else:
+                phase = None
+                skeleton = batch[2] if len(batch) == 3 else None
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
             if skeleton is not None:
                 skeleton = skeleton.to(self.device, non_blocking=True)
+            if phase is not None:
+                phase = phase.to(self.device, non_blocking=True)
             with autocast("cuda", enabled=self.use_amp):
-                logits = model(images)
-                loss = self.criterion(logits, masks, skeleton)
+                output = model(images, phase)
+                if isinstance(output, tuple):
+                    logits, _ = output
+                    loss = self.criterion(logits, masks, skeleton)
+                else:
+                    logits = output
+                    loss = self.criterion(logits, masks, skeleton)
             predictions = predictions_from_logits(
                 logits,
                 threshold=evaluation_cfg["threshold"],

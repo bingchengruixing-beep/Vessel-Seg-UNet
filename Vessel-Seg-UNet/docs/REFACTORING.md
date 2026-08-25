@@ -126,3 +126,16 @@ pytest -q
 - **环境适配**：`albumentations` 锁定 `<1.4.8`（1.4.8+ 依赖需要 C 编译器的 stringzilla）；`PadIfNeeded` 显式 `value=0`（1.4.7 pydantic 校验要求）；AMP 迁移到 `torch.amp` 新 API（torch≥2.3）。完整环境搭建与踩坑记录见 [ENVIRONMENT.md](ENVIRONMENT.md)。
 
 **兼容性**：所有新配置键均有默认值；旧检查点加载不受影响（`cl_dice_weight` 默认 0、损失签名向后兼容）。`train.py`、`evaluate.py`、`inference.py` 均支持 `--device`。
+
+## 2026-08-25 相位优化批次
+
+针对完整数据集按时相(2~3s / 4s / 5~6s / dataset2)效果不一致的问题：
+
+- **方案 B(相位标定)**：`experiments/phase_calibration.py` 按分组网格搜索阈值与后处理参数，输出 `phase_calibration.json`。结论:显影越淡的时相需要越低阈值(5~6s 最优 0.35、4s 最优 0.65),后处理在所有分组均为负收益;
+- **方案 A(FiLM 相位条件化)**：
+  - `src/models/unet.py`:新增 `FiLMBlock`(Embedding→MLP 产生逐通道 (1+dγ)·x+dβ,零初始化保证恒等起点),`UNetBaseline(phase_classes>0)` 时在编码器四级施加条件并新增相位分类头,前向返回 `(logits, phase_logits)`;
+  - `src/dataset.py`:新增 `PHASE_PREFIXES` 与 `phase_id_from_filename`,config `training.phase_condition` 开启时数据集返回相位 id(四元组);
+  - `src/trainer.py`:相位传递 + `phase_loss_weight × CrossEntropy` 辅助损失(顺带训练"相位预判定"能力);
+  - 全链路适配:train / evaluate / inference(`predict_phase` 方法) / web_server;
+  - 新配置键:`model.phase_classes`、`training.phase_condition`、`training.phase_loss_weight`,均有校验;
+  - 实验:`configs/experiments/exp6_phase_film.yaml`(clDice 配方 + 相位条件),新增 `tests/test_phase.py`(5 例,总计 34 passed)。

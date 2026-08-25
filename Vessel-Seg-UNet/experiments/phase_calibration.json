@@ -1,0 +1,35 @@
+{
+  "checkpoint": "E:\\DSCA\\Coding\\Vessel-Seg-UNet\\Vessel-Seg-UNet\\checkpoints\\exp5_own_cl_dice\\best_model.pth",
+  "default_overall_note": "默认参数(0.5/无后处理)整体见 exp5 报告 0.7730",
+  "per_group": {
+    "dataset1-2~3s": {
+      "threshold": 0.45,
+      "min_size": 0,
+      "dice": 0.776747919692519,
+      "n": 7,
+      "default_dice": 0.7765
+    },
+    "dataset1-4s": {
+      "threshold": 0.65,
+      "min_size": 0,
+      "dice": 0.8029848205006422,
+      "n": 5,
+      "default_dice": 0.7991
+    },
+    "dataset1-5~6s": {
+      "threshold": 0.35,
+      "min_size": 0,
+      "dice": 0.6944838836853129,
+      "n": 4,
+      "default_dice": 0.6887
+    },
+    "dataset2-4s": {
+      "threshold": 0.6,
+      "min_size": 0,
+      "dice": 0.790409587747858,
+      "n": 11,
+      "default_dice": 0.7891
+    }
+  },
+  "overall_with_calibration": 0.7694
+}

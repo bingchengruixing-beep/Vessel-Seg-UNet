@@ -27,6 +27,17 @@ from src.config import resolve_data_path
 from src.skeleton import zhang_suen_thinning
 from src.transforms import get_train_transforms, get_val_transforms
 
+# 相位分组前缀(完整数据集构建脚本保证的文件命名约定)
+PHASE_PREFIXES = ("d1_2-3s_", "d1_4s_", "d1_5-6s_", "d2_")
+
+
+def phase_id_from_filename(fname: str) -> int:
+    """从文件名前缀推断相位 id(0:2~3s, 1:4s, 2:5~6s, 3:dataset2)。"""
+    for idx, prefix in enumerate(PHASE_PREFIXES):
+        if fname.startswith(prefix):
+            return idx
+    raise ValueError(f"Cannot infer phase from filename: {fname}")
+
 
 class VesselDataset(Dataset):
     """
@@ -49,11 +60,15 @@ class VesselDataset(Dataset):
         mask_dir: str,
         transform=None,
         return_skeleton: bool = False,
+        skeleton_size: int = 256,
+        return_phase: bool = False,
     ):
         self.image_dir = image_dir
         self.mask_dir = mask_dir
         self.transform = transform
         self.return_skeleton = return_skeleton
+        self.skeleton_size = skeleton_size
+        self.return_phase = return_phase
 
         # 收集所有支持格式的图像文件名（仅保留在 mask_dir 中也存在的）
         self.filenames = sorted([
@@ -113,14 +128,44 @@ class VesselDataset(Dataset):
         if mask.dim() == 2:
             mask = mask.unsqueeze(0)  # (H, W) → (1, H, W)
 
+        # 防御性对齐: 源数据 image/mask 尺寸不一致时, 部分增强(PadIfNeeded)会
+        # 按图像尺寸补边导致掩膜尺寸漂移, 这里强制把 mask 对齐到 image 尺寸。
+        if mask.shape != image.shape:
+            mask_np = mask[0].cpu().numpy()
+            mask_np = cv2.resize(
+                mask_np, (image.shape[2], image.shape[1]), interpolation=cv2.INTER_NEAREST
+            )
+            mask = torch.from_numpy(mask_np).unsqueeze(0)
+
         # 强制 {0.0, 1.0} 二值化（防御性处理）
         mask = (mask > 0.5).float()
 
         if self.return_skeleton:
-            # 骨架必须从增强后的掩膜计算，保证与 mask 空间一致
-            skeleton_np = zhang_suen_thinning(mask[0].cpu().numpy())
+            # 骨架必须从增强后的掩膜计算，保证与 mask 空间一致。
+            # 先降采样到 skeleton_size 再细化并最近邻还原：
+            # 拓扑损失对分辨率不敏感，可把 CPU 开销降低 4 倍以上。
+            mask_np = (mask[0].cpu().numpy() > 0.5).astype(np.uint8)
+            if self.skeleton_size and max(mask_np.shape) > self.skeleton_size:
+                h, w = mask_np.shape
+                scale = self.skeleton_size / max(h, w)
+                sh = max(1, int(round(h * scale)))
+                sw = max(1, int(round(w * scale)))
+                small = cv2.resize(mask_np, (sw, sh), interpolation=cv2.INTER_NEAREST)
+                skeleton_np = zhang_suen_thinning(small)
+                skeleton_np = cv2.resize(
+                    skeleton_np.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST
+                )
+            else:
+                skeleton_np = zhang_suen_thinning(mask_np)
             skeleton = torch.from_numpy(skeleton_np.astype(np.float32)).unsqueeze(0)
+            if self.return_phase:
+                phase = torch.tensor(phase_id_from_filename(fname), dtype=torch.long)
+                return image, mask, skeleton, phase
             return image, mask, skeleton
+
+        if self.return_phase:
+            phase = torch.tensor(phase_id_from_filename(fname), dtype=torch.long)
+            return image, mask, phase
 
         return image, mask
 
@@ -156,6 +201,8 @@ def get_dataloaders(
     return_skeleton = float(
         config['training']['loss'].get('cl_dice_weight', 0.0)
     ) > 0
+    # FiLM 相位条件化需要数据集返回相位 id
+    return_phase = bool(config['training'].get('phase_condition', False))
 
     root = project_root or os.getcwd()
 
@@ -165,12 +212,16 @@ def get_dataloaders(
         mask_dir=str(resolve_data_path(data_cfg['train_mask_dir'], root)),
         transform=train_transform,
         return_skeleton=return_skeleton,
+        skeleton_size=int(data_cfg.get('skeleton_size', 256)),
+        return_phase=return_phase,
     )
     val_dataset = VesselDataset(
         image_dir=str(resolve_data_path(data_cfg['val_image_dir'], root)),
         mask_dir=str(resolve_data_path(data_cfg['val_mask_dir'], root)),
         transform=val_transform,
         return_skeleton=return_skeleton,
+        skeleton_size=int(data_cfg.get('skeleton_size', 256)),
+        return_phase=return_phase,
     )
 
     # 构建 DataLoader

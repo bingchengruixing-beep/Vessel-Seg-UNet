@@ -175,6 +175,19 @@
 
 ---
 
+## 8. 阶段五：完整数据集(自有标注 177 对,08-25)
+
+> 说明:项目**正式使用的完整数据集**为后来加入的 177 对自有标注数据;
+> DIAS 50 对仅为预实验阶段的开源于集。正式报告见 `experiments/RESULTS.md`,指标总表见 `experiments/metrics_all.csv`。
+
+1. **数据构建**：`experiments/build_dataset.py` 合并 177 对 → train 150 / val 27（seed 42），处理三类问题：35 张软标注概率图阈值二值化、5 对图像/掩膜尺寸错位（含 1 对转置）对齐、跨组重名加前缀；
+2. **管线 bug 修复**：发现 albumentations `PadIfNeeded` 对尺寸不一致的掩膜按图像补边量错位填充（512→501），导致 collate 崩溃。在 `src/dataset.py` 加防御性尺寸对齐 + 数据构建层修复，新增回归测试（29 passed）；
+3. **clDice 提速落地**：骨架降采样 256 计算（`dataset.skeleton_size`），每 epoch 骨架开销 160s→38s；
+4. **主实验**：基线 0.7593 vs **clDice 0.7730**（IoU +1.8pp、Recall +2.6pp、Precision 持平）——clDice 在完整数据集上再次胜出，结论可复现；推荐配置 `configs/experiments/exp5_own_cl_dice.yaml`；
+5. **跨域泛化矩阵**：自有→DIAS 0.646（高召回低精度）、DIAS→自有 0.706（高精度低召回），域差距明确，建议后续混合训练。
+
+---
+
 ## 7. 遗留事项与下一步建议
 
 1. **重跑 exp4**(可选):保持通电运行 `powershell -File experiments/run_experiments.ps1`,或仅重跑 exp4 训练;
