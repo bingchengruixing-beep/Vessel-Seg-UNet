@@ -161,6 +161,7 @@ mask = seg.predict('path/to/angiogram.png')
 - 开启 **2.5D 前/中/后三时相** 后，模型输入自动切换为 3 通道。dataset1 使用同编号三时相；dataset2、DIAS 等缺少配对时相的样本自动重复当前图。
 - 2.5D checkpoint 做 Web 推理时，可以选择普通单图（自动重复三通道），也可以切换到三时相输入并按前、当前、后顺序上传 3 张图。
 - Web 数据配置提供 DataLoader 常驻 worker、预取 batch 数和每 worker 解码缓存。Windows 多 worker 训练建议保持默认的常驻 worker、预取 2 batch、缓存 32 项；`num_workers=0` 时这些并行选项会自动忽略。
+- 这些 DataLoader 优化对所有使用统一训练入口的模型通用，不仅适用于 2.5D；它们只优化数据准备，不改变模型、损失、采样概率或评估口径。若 GPU 已经持续满载，增大预取或缓存不会继续提升速度。
 
 推荐的 3 折操作顺序：
 
