@@ -9,7 +9,13 @@ import cv2
 import numpy as np
 import torch
 
-from src.checkpoints import checkpoint_model_config, infer_legacy_model_name, load_checkpoint, load_model_state
+from src.checkpoints import (
+    checkpoint_model_config,
+    infer_legacy_in_channels,
+    infer_legacy_model_name,
+    load_checkpoint,
+    load_model_state,
+)
 from src.config import normalize_config
 from src.models import build_model_from_config
 from src.prediction import main_logits_from_output, postprocess_predictions
@@ -55,20 +61,27 @@ class VesselSegmentor:
         config: Optional[dict] = None,
     ):
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.checkpoint = load_checkpoint(model_path, map_location=self.device)
-        saved_config = self.checkpoint.get("config")
+        # 先在 CPU 解析 checkpoint，避免集成多个模型时把优化器状态也长期占在显存中。
+        checkpoint = load_checkpoint(model_path, map_location="cpu")
+        saved_config = checkpoint.get("config")
         self.config = normalize_config(saved_config if isinstance(saved_config, dict) else config)
         if not isinstance(saved_config, dict):
-            detected_name = infer_legacy_model_name(self.checkpoint)
+            detected_name = infer_legacy_model_name(checkpoint)
             if detected_name:
                 self.config["model"]["name"] = detected_name
                 self.config["model"]["pretrained"] = False
-        model_cfg = checkpoint_model_config(self.checkpoint, self.config)
+            detected_channels = infer_legacy_in_channels(checkpoint)
+            if detected_channels:
+                self.config["model"]["in_channels"] = detected_channels
+                self.config["model"]["input_mode"] = "grayscale"
+        model_cfg = checkpoint_model_config(checkpoint, self.config)
         if model_name is not None:
             model_cfg["name"] = model_name
+        self.in_channels = int(model_cfg.get("in_channels", 1))
         self.model = build_model_from_config(model_cfg)
-        load_model_state(self.model, self.checkpoint)
+        load_model_state(self.model, checkpoint)
         self.model.to(self.device).eval()
+        del checkpoint
 
         inference_cfg = self.config["inference"]
         self.img_size = img_size or inference_cfg["img_size"] or self.config["dataset"]["img_size"]
@@ -93,9 +106,6 @@ class VesselSegmentor:
     @torch.no_grad()
     def predict_array(self, image: np.ndarray) -> np.ndarray:
         """Segment a ``(H, W)`` grayscale uint8 image."""
-        if image.ndim != 2:
-            raise ValueError("predict_array expects a two-dimensional grayscale image")
-        original_h, original_w = image.shape
         probabilities = self.predict_probability_array(image)
         predictions = torch.from_numpy((probabilities > float(self.threshold)).astype(np.float32))[None, None]
         if self.postprocess_config["enabled"]:
@@ -105,9 +115,7 @@ class VesselSegmentor:
     @torch.no_grad()
     def predict_probability_array(self, image: np.ndarray) -> np.ndarray:
         """返回与原图同尺寸的概率图，支持整图和重叠 patch 两种模式。"""
-        if image.ndim != 2:
-            raise ValueError("predict_probability_array expects a two-dimensional grayscale image")
-        original_h, original_w = image.shape
+        image, original_h, original_w = self._prepare_input(image)
         if self.patch_config.get("enabled", False):
             return self._predict_sliding(image)
         tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
@@ -120,17 +128,36 @@ class VesselSegmentor:
             cv2.INTER_LINEAR,
         )
 
+    def _prepare_input(self, image: np.ndarray) -> tuple[np.ndarray, int, int]:
+        """按 checkpoint 通道数把单图或前/中/后三时相整理为模型输入。"""
+        if image.ndim == 2:
+            height, width = image.shape
+            if self.in_channels == 1:
+                return image, height, width
+            if self.in_channels == 3:
+                return np.repeat(image[..., None], 3, axis=2), height, width
+        elif image.ndim == 3 and image.shape[2] == 3:
+            height, width = image.shape[:2]
+            if self.in_channels == 3:
+                return image, height, width
+            if self.in_channels == 1:
+                return image[..., 1], height, width
+        raise ValueError(
+            f"无法把形状 {image.shape} 的输入适配为 {self.in_channels} 通道模型"
+        )
+
     def _predict_sliding(self, image: np.ndarray) -> np.ndarray:
         """以重叠 patch 推理并对重叠区域平均概率。"""
         size = int(self.patch_config.get("size", self.img_size))
         stride = int(self.patch_config.get("stride", max(size // 2, 1)))
         if stride <= 0 or stride > size:
             raise ValueError("inference.patch.stride 必须在 1 到 patch.size 之间")
-        height, width = image.shape
+        height, width = image.shape[:2]
         padded_height = max(height, size)
         padded_width = max(width, size)
-        padded = np.zeros((padded_height, padded_width), dtype=image.dtype)
-        padded[:height, :width] = image
+        padded_shape = (padded_height, padded_width) + image.shape[2:]
+        padded = np.zeros(padded_shape, dtype=image.dtype)
+        padded[:height, :width, ...] = image
         rows = self._sliding_positions(padded_height, size, stride)
         cols = self._sliding_positions(padded_width, size, stride)
         probability_sum = np.zeros((padded_height, padded_width), dtype=np.float32)

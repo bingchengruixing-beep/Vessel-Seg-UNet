@@ -15,6 +15,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "num_workers": 0,
         "pin_memory": True,
         "keep_aspect_ratio": True,
+        "loader": {
+            "persistent_workers": True,
+            "prefetch_factor": 2,
+            "cache_size": 32,
+        },
         "augmentation": {
             "elastic_transform": False,
         },
@@ -23,6 +28,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "size": 640,
             "foreground_probability": 0.7,
             "min_foreground_ratio": 0.002,
+        },
+        "frangi": {
+            "enabled": False,
+            "train_frangi_dir": "",
+            "val_frangi_dir": "",
+            "method": "hessian",
+            "sigmas": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "beta": 0.5,
+            "c": 0,
+        },
+        "domain_balance": {
+            "enabled": True,
+            "target_prefixes": ["dias_train_"],
+            "target_probability": 0.4,
+            # 0 表示每轮采样次数与当前训练子集大小相同。
+            "samples_per_epoch": 0,
+        },
+        "cross_validation": {
+            "enabled": False,
+            "num_folds": 3,
+            "fold_index": 0,
+        },
+        "temporal_2_5d": {
+            "enabled": False,
         },
         "train_image_dir": "data/train/images",
         "train_mask_dir": "data/train/masks",
@@ -36,6 +65,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "encoder_name": "resnet34",
         "pretrained": True,
         "deep_supervision": True,
+        "input_mode": "grayscale",
     },
     "training": {
         "batch_size": 1,
@@ -176,6 +206,13 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     _positive_int(dataset.get("img_size"), "dataset.img_size")
     _nonnegative_int(dataset.get("num_workers"), "dataset.num_workers")
+    loader = dataset.get("loader")
+    if not isinstance(loader, Mapping):
+        raise ConfigError("dataset.loader must be a mapping")
+    if not isinstance(loader.get("persistent_workers"), bool):
+        raise ConfigError("dataset.loader.persistent_workers must be boolean")
+    _positive_int(loader.get("prefetch_factor"), "dataset.loader.prefetch_factor")
+    _nonnegative_int(loader.get("cache_size"), "dataset.loader.cache_size")
     if not isinstance(dataset.get("keep_aspect_ratio"), bool):
         raise ConfigError("dataset.keep_aspect_ratio must be boolean")
     augmentation = dataset.get("augmentation")
@@ -189,6 +226,62 @@ def validate_config(config: Mapping[str, Any]) -> None:
     _positive_int(patch.get("size"), "dataset.patch.size")
     _probability(patch.get("foreground_probability"), "dataset.patch.foreground_probability")
     _nonnegative_float(patch.get("min_foreground_ratio"), "dataset.patch.min_foreground_ratio")
+    frangi = dataset.get("frangi")
+    if not isinstance(frangi, Mapping):
+        raise ConfigError("dataset.frangi must be a mapping")
+    if not isinstance(frangi.get("enabled"), bool):
+        raise ConfigError("dataset.frangi.enabled must be boolean")
+    if frangi.get("enabled"):
+        if frangi.get("method", "hessian") not in {"hessian", "frangi"}:
+            raise ConfigError("dataset.frangi.method must be hessian or frangi")
+        if not isinstance(frangi.get("sigmas"), list) or len(frangi["sigmas"]) == 0:
+            raise ConfigError("dataset.frangi.sigmas must be a non-empty list")
+        for i, sigma in enumerate(frangi["sigmas"]):
+            _positive_float(sigma, f"dataset.frangi.sigmas[{i}]")
+        _positive_float(frangi.get("beta", 0.5), "dataset.frangi.beta")
+        _nonnegative_float(frangi.get("c", 15.0), "dataset.frangi.c")
+    domain_balance = dataset.get("domain_balance")
+    if not isinstance(domain_balance, Mapping):
+        raise ConfigError("dataset.domain_balance must be a mapping")
+    if not isinstance(domain_balance.get("enabled"), bool):
+        raise ConfigError("dataset.domain_balance.enabled must be boolean")
+    target_prefixes = domain_balance.get("target_prefixes")
+    if not isinstance(target_prefixes, list) or not target_prefixes or any(
+        not isinstance(value, str) or not value.strip() for value in target_prefixes
+    ):
+        raise ConfigError("dataset.domain_balance.target_prefixes must be a non-empty string list")
+    target_probability = _nonnegative_float(
+        domain_balance.get("target_probability"),
+        "dataset.domain_balance.target_probability",
+    )
+    if domain_balance.get("enabled") and not 0.0 < target_probability < 1.0:
+        raise ConfigError("dataset.domain_balance.target_probability must be between 0 and 1")
+    _nonnegative_int(
+        domain_balance.get("samples_per_epoch"),
+        "dataset.domain_balance.samples_per_epoch",
+    )
+
+    cross_validation = dataset.get("cross_validation")
+    if not isinstance(cross_validation, Mapping):
+        raise ConfigError("dataset.cross_validation must be a mapping")
+    if not isinstance(cross_validation.get("enabled"), bool):
+        raise ConfigError("dataset.cross_validation.enabled must be boolean")
+    num_folds = _positive_int(
+        cross_validation.get("num_folds"), "dataset.cross_validation.num_folds"
+    )
+    fold_index = _nonnegative_int(
+        cross_validation.get("fold_index"), "dataset.cross_validation.fold_index"
+    )
+    if not 3 <= num_folds <= 5:
+        raise ConfigError("dataset.cross_validation.num_folds must be between 3 and 5")
+    if fold_index >= num_folds:
+        raise ConfigError("dataset.cross_validation.fold_index must be smaller than num_folds")
+
+    temporal = dataset.get("temporal_2_5d")
+    if not isinstance(temporal, Mapping) or not isinstance(temporal.get("enabled"), bool):
+        raise ConfigError("dataset.temporal_2_5d.enabled must be boolean")
+    if temporal.get("enabled") and frangi.get("enabled"):
+        raise ConfigError("temporal_2_5d and frangi cannot be enabled together")
     _positive_int(model.get("in_channels"), "model.in_channels")
     _positive_int(model.get("out_channels"), "model.out_channels")
     if model.get("name") not in {"unet_baseline", "attention_unet", "unet_resnet", "resunet_aspp", "vessel_fusion"}:
@@ -198,6 +291,12 @@ def validate_config(config: Mapping[str, Any]) -> None:
     for field in ("pretrained", "deep_supervision"):
         if not isinstance(model.get(field), bool):
             raise ConfigError(f"model.{field} must be boolean")
+    if model.get("input_mode") not in {"grayscale", "temporal"}:
+        raise ConfigError("model.input_mode must be grayscale or temporal")
+    if temporal.get("enabled") and int(model.get("in_channels")) != 3:
+        raise ConfigError("model.in_channels must be 3 when temporal_2_5d is enabled")
+    if temporal.get("enabled") and model.get("input_mode") != "temporal":
+        raise ConfigError("model.input_mode must be temporal when temporal_2_5d is enabled")
 
     _positive_int(training.get("batch_size"), "training.batch_size")
     _positive_int(training.get("epochs"), "training.epochs")

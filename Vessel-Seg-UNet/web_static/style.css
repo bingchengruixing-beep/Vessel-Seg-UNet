@@ -615,3 +615,6 @@ input:focus, select:focus {
     .sys-card-wide { grid-column: span 1; }
     .config-grid { grid-template-columns: 1fr; }
 }
+.checkpoint-multi-select {
+    min-height: 112px;
+}

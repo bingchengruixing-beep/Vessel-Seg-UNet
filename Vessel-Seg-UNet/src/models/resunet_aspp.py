@@ -83,6 +83,7 @@ class ResUNetASPP(nn.Module):
         out_channels: int = 1,
         pretrained: bool = True,
         deep_supervision: bool = True,
+        temporal_input: bool = False,
     ):
         super().__init__()
         try:
@@ -98,7 +99,11 @@ class ResUNetASPP(nn.Module):
             encoder = resnet34(weights=None)
 
         # 将 ResNet 的 RGB 第一层改成灰度输入，并平均 RGB 初始化权重。
-        if in_channels != 3:
+        if temporal_input and in_channels == 3:
+            with torch.no_grad():
+                temporal_weight = encoder.conv1.weight.data.mean(dim=1, keepdim=True) / 3.0
+                encoder.conv1.weight.copy_(temporal_weight.repeat(1, 3, 1, 1))
+        elif in_channels != 3:
             old_weight = encoder.conv1.weight.data
             encoder.conv1 = nn.Conv2d(
                 in_channels,

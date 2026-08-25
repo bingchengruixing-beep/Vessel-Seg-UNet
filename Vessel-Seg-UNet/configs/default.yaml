@@ -1,8 +1,12 @@
 dataset:
-  img_size: 512
-  num_workers: 0
+  img_size: 1024
+  num_workers: 4
   pin_memory: true
   keep_aspect_ratio: true
+  loader:
+    persistent_workers: true
+    prefetch_factor: 2
+    cache_size: 32
   augmentation:
     elastic_transform: false
   patch:
@@ -10,19 +14,45 @@ dataset:
     size: 640
     foreground_probability: 0.7
     min_foreground_ratio: 0.002
+  frangi:
+    enabled: false
+    train_frangi_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\frangi
+    val_frangi_dir: D:\STUDYPOWER\1大创\数据集-标注完成\开源数据集；DIAS\val\frangi
+    method: hessian
+    sigmas:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    beta: 0.5
+    c: 0
+  domain_balance:
+    enabled: true
+    target_prefixes:
+    - dias_train_
+    target_probability: 0.4
+    samples_per_epoch: 0
+  cross_validation:
+    enabled: true
+    num_folds: 3
+    fold_index: 2
+  temporal_2_5d:
+    enabled: false
   train_image_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\normal
   train_mask_dir: D:\STUDYPOWER\1大创\数据集-标注完成\统一训练集\masks
   val_image_dir: D:\STUDYPOWER\1大创\数据集-标注完成\开源数据集；DIAS\val\images
   val_mask_dir: D:\STUDYPOWER\1大创\数据集-标注完成\开源数据集；DIAS\val\masks
 model:
-  name: attention_unet
+  name: resunet_aspp
   in_channels: 1
   out_channels: 1
   encoder_name: resnet34
   pretrained: true
   deep_supervision: true
+  input_mode: grayscale
 training:
-  batch_size: 1
+  batch_size: 2
   epochs: 100
   learning_rate: 0.0001
   weight_decay: 0.0001
@@ -34,12 +64,12 @@ training:
   grad_clip: 1.0
   ema_decay: 0.999
   loss:
-    name: BCEDiceLoss
-    bce_weight: 0.5
-    dice_weight: 0.5
+    name: BCEDiceClDiceLoss
+    bce_weight: 0.3
+    dice_weight: 0.55
     dice_smooth: 1.0e-06
-    cl_dice_weight: 0
-    cldice_weight: 0
+    cl_dice_weight: 0.15
+    cldice_weight: 0.15
     skeleton_iterations: 5
     focal_tversky:
       alpha: 0.7
@@ -48,7 +78,7 @@ training:
   early_stopping:
     patience: 10
   checkpoint:
-    save_dir: checkpoints
+    save_dir: test3
     save_best_only: true
     save_interval: 10
   deep_supervision_weights:

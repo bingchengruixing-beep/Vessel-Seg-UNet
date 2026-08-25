@@ -45,3 +45,31 @@ def test_restore_original_geometry_plain_resize_without_aspect_ratio():
 
     assert restored.shape == (128, 64)
     assert restored.min() == 255
+
+
+def test_temporal_model_repeats_a_single_grayscale_image():
+    segmentor = VesselSegmentor.__new__(VesselSegmentor)
+    segmentor.in_channels = 3
+    image = np.arange(12, dtype=np.uint8).reshape(3, 4)
+
+    prepared, height, width = segmentor._prepare_input(image)
+
+    assert prepared.shape == (3, 4, 3)
+    assert height == 3 and width == 4
+    assert np.array_equal(prepared[..., 0], image)
+    assert np.array_equal(prepared[..., 1], image)
+    assert np.array_equal(prepared[..., 2], image)
+
+
+def test_grayscale_model_uses_current_frame_from_temporal_input():
+    segmentor = VesselSegmentor.__new__(VesselSegmentor)
+    segmentor.in_channels = 1
+    temporal = np.stack([
+        np.zeros((2, 3), dtype=np.uint8),
+        np.ones((2, 3), dtype=np.uint8),
+        np.full((2, 3), 2, dtype=np.uint8),
+    ], axis=-1)
+
+    prepared, _, _ = segmentor._prepare_input(temporal)
+
+    assert np.array_equal(prepared, temporal[..., 1])

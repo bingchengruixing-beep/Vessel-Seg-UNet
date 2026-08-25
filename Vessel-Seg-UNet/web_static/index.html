@@ -163,6 +163,98 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>预取 Batch 数</label>
+                        <input type="number" id="cfg-prefetch-factor" value="2" min="1" max="8">
+                    </div>
+                    <div class="form-group">
+                        <label>每 Worker 解码缓存</label>
+                        <input type="number" id="cfg-cache-size" value="32" min="0" max="256">
+                    </div>
+                </div>
+                <div class="form-group switch-row">
+                    <label>常驻 DataLoader Workers</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-persistent-workers" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group switch-row">
+                    <label>DIAS 目标域平衡采样</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-domain-balance-enabled" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group" id="cfg-domain-balance-group">
+                    <label>DIAS 每轮采样占比</label>
+                    <input type="number" id="cfg-domain-target-probability" value="0.4" min="0.05" max="0.95" step="0.05">
+                </div>
+                <div class="form-group switch-row">
+                    <label>按序列分组 K 折</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-cross-validation-enabled">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-row" id="cfg-cross-validation-group" style="display:none">
+                    <div class="form-group">
+                        <label>K 折数量</label>
+                        <input type="number" id="cfg-num-folds" value="3" min="3" max="5">
+                    </div>
+                    <div class="form-group">
+                        <label>当前折</label>
+                        <input type="number" id="cfg-fold-index" value="1" min="1" max="3">
+                    </div>
+                </div>
+                <div class="form-group switch-row">
+                    <label>2.5D 前/中/后三时相</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-temporal-enabled">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="form-group switch-row">
+                    <label>🧬 Frangi 血管增强通道</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-frangi-enabled">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="cfg-frangi-group" style="display:none">
+                    <div class="form-group">
+                        <label>训练集 Frangi 图目录</label>
+                        <div class="path-input-row">
+                            <input type="text" id="cfg-train-frangi-dir" placeholder="留空则自动使用 训练图像目录同级/frangi">
+                            <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-train-frangi-dir">选择文件夹</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>验证集 Frangi 图目录</label>
+                        <div class="path-input-row">
+                            <input type="text" id="cfg-val-frangi-dir" placeholder="留空则自动使用 验证图像目录同级/frangi">
+                            <button type="button" class="btn btn-secondary btn-sm btn-choose-directory" data-directory-target="cfg-val-frangi-dir">选择文件夹</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Frangi 多尺度 sigma</label>
+                        <input type="text" id="cfg-frangi-sigmas" value="1.0,2.0,3.0,4.0,5.0" placeholder="逗号分隔，如 1.0,2.0,3.0,4.0,5.0">
+                        <p class="hint-text">控制检测的血管直径范围，值越大检测越粗的血管</p>
+                    </div>
+                    <div class="form-group">
+                        <label>增强方法</label>
+                        <select id="cfg-frangi-method">
+                            <option value="hessian" selected>Hessian -λ₂（推荐DSA，简单高效）</option>
+                            <option value="frangi">Frangi（经典方法，需调大 beta）</option>
+                        </select>
+                        <p class="hint-text">Hessian 方法适合 DSA 血管边缘锐利的特征；Frangi 方法需要配合较大的 beta 值（1.5~3.0）</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-generate-frangi" style="margin-top:8px">🔄 生成 Frangi 增强图</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="btn-stop-frangi" style="margin-top:8px;display:none">⏹ 停止生成</button>
+                    <button type="button" class="btn btn-danger btn-sm" id="btn-clear-frangi" style="margin-top:8px">🗑 清空 Frangi 图</button>
+                    <span id="frangi-generate-status" class="hint-text" style="margin-left:8px"></span>
+                </div>
                 <div id="cfg-patch-group">
                     <div class="form-group switch-row">
                         <label>前景 Patch 训练</label>
@@ -302,14 +394,14 @@
                     </div>
                     <input type="range" id="cfg-dice-weight" class="range-input" min="0" max="1" step="0.05" value="0.5">
                 </div>
-                <div class="form-group" id="cfg-cldice-group" style="display:none">
+                <div class="form-group" id="cfg-cldice-group">
                     <div class="slider-label-row">
-                        <label>clDice 权重</label>
-                        <span class="mono" id="cfg-cldice-weight-value">0.15</span>
+                        <label>clDice 拓扑保持权重</label>
+                        <span class="mono" id="cfg-cldice-weight-value">0.00</span>
                     </div>
-                    <input type="range" id="cfg-cldice-weight" class="range-input" min="0" max="1" step="0.05" value="0.15">
+                    <input type="range" id="cfg-cldice-weight" class="range-input" min="0" max="1" step="0.05" value="0">
                 </div>
-                <p class="hint-text" id="cfg-loss-weight-hint">BCE 与 Dice 权重之和为 1.0（自动联动）</p>
+                <p class="hint-text" id="cfg-loss-weight-hint">BCE + Dice + clDice 权重总和为 1.0（自动联动）</p>
             </div>
 
             <!-- 早停与保存 -->
@@ -345,9 +437,16 @@
         <!-- Controls bar -->
         <div class="infer-controls glass-panel">
             <div class="form-group">
-                <label>模型权重</label>
-                <select id="inference-checkpoint">
+                <label>模型权重（可多选集成）</label>
+                <select id="inference-checkpoint" multiple size="4" class="checkpoint-multi-select">
                     <option value="">— 请先选择 checkpoint —</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>输入方式</label>
+                <select id="inference-input-mode">
+                    <option value="standard">普通单图或批量</option>
+                    <option value="temporal">前/当前/后三时相</option>
                 </select>
             </div>
             <div class="form-group">
@@ -404,13 +503,38 @@
             <div class="scan-heading">
                 <div>
                     <h3 class="card-title">验证集阈值扫描</h3>
-                    <p class="hint-text">按 0.01 步长扫描阈值，页面只显示最佳值附近的 4 个结果</p>
+                    <p class="hint-text">默认先按 0.05 粗扫，再在粗扫最佳点附近按 0.01 精扫</p>
                 </div>
                 <button class="btn btn-secondary" id="btn-threshold-scan">📊 批量测试阈值</button>
             </div>
                 <div class="form-group">
-                    <label for="threshold-scan-values">扫描范围（起点-终点，步长 0.01）</label>
+                    <label for="threshold-scan-values">扫描范围（起点-终点）</label>
                     <input type="text" id="threshold-scan-values" value="0.30-0.80" placeholder="例如 0.30-0.80，也支持逗号列表">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="threshold-evaluation-split">评估验证集</label>
+                        <select id="threshold-evaluation-split">
+                            <option value="dias_external" selected>DIAS 外部验证集（可比基线）</option>
+                            <option value="fold_validation">当前 K 折验证集（内部）</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="threshold-scan-mode">扫描模式</label>
+                        <select id="threshold-scan-mode">
+                            <option value="coarse_fine" selected>0.05 粗扫 + 0.01 精扫</option>
+                            <option value="custom">自定义阈值列表</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="threshold-coarse-step">粗扫步长</label>
+                        <input type="number" id="threshold-coarse-step" value="0.05" min="0.01" max="1" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label for="threshold-fine-step">精扫步长</label>
+                        <input type="number" id="threshold-fine-step" value="0.01" min="0.01" max="1" step="0.01">
+                    </div>
+                </div>
             </div>
             <div id="threshold-scan-status" class="hint-text">尚未开始扫描</div>
             <div class="threshold-best" id="threshold-scan-best" style="display:none"></div>

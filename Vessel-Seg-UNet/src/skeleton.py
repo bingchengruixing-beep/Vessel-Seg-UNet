@@ -7,28 +7,6 @@ from __future__ import annotations
 
 import numpy as np
 
-# 8 邻域顺序: P2 P3 P4 P5 P6 P7 P8 P9 (顺时针, P2 在正上方)
-_NEIGHBOR_SLICES = (
-    (slice(None, -2), slice(1, -1)),   # P2 上
-    (slice(None, -2), slice(2, None)), # P3 右上
-    (slice(1, -1), slice(2, None)),    # P4 右
-    (slice(2, None), slice(2, None)),  # P5 右下
-    (slice(2, None), slice(1, -1)),    # P6 下
-    (slice(2, None), slice(None, -2)), # P7 左下
-    (slice(1, -1), slice(None, -2)),   # P8 左
-    (slice(None, -2), slice(None, -2)),# P9 左上
-)
-
-
-def _transition_count(ring: np.ndarray) -> np.ndarray:
-    """统计每个像素的 8 邻域环上 0→1 跳变次数 (Zhang-Suen 的 S(P1))。"""
-    # ring: (8, H, W) 的 0/1 邻居张量
-    return sum(
-        (ring[i] == 0) & (ring[(i + 1) % 8] == 1)
-        for i in range(8)
-    )
-
-
 def zhang_suen_thinning(binary: np.ndarray) -> np.ndarray:
     """对二值掩膜做 Zhang-Suen 细化,返回 bool 骨架 (H, W)。
 
@@ -40,22 +18,40 @@ def zhang_suen_thinning(binary: np.ndarray) -> np.ndarray:
     """
     if binary.ndim != 2:
         raise ValueError("zhang_suen_thinning expects a 2D binary mask")
-    img = (np.asarray(binary) > 0.5).astype(np.uint8)
-    if not img.any():
-        return img.astype(bool)
+    source = np.asarray(binary) > 0.5
+    result = np.zeros(source.shape, dtype=bool)
+    positions = np.argwhere(source)
+    if positions.size == 0:
+        return result
+
+    # 黑色背景不会影响细化，只处理前景包围盒可显著减少 1024 图像的临时数组。
+    top, left = positions.min(axis=0)
+    bottom, right = positions.max(axis=0) + 1
+    img = source[top:bottom, left:right].astype(np.uint8)
 
     while True:
         deleted_any = False
         for step in (0, 1):
             padded = np.pad(img, 1, mode="constant")
-            ring = np.stack([
-                padded[s0, s1] for s0, s1 in _NEIGHBOR_SLICES
-            ])  # (8, H, W)
+            p2 = padded[:-2, 1:-1]
+            p3 = padded[:-2, 2:]
+            p4 = padded[1:-1, 2:]
+            p5 = padded[2:, 2:]
+            p6 = padded[2:, 1:-1]
+            p7 = padded[2:, :-2]
+            p8 = padded[1:-1, :-2]
+            p9 = padded[:-2, :-2]
 
-            n_neighbors = ring.sum(axis=0)
-            transitions = _transition_count(ring)
-
-            p2, p4, p6, p8 = ring[0], ring[2], ring[4], ring[6]
+            n_neighbors = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
+            transitions = np.zeros_like(img, dtype=np.uint8)
+            transitions += (p2 == 0) & (p3 == 1)
+            transitions += (p3 == 0) & (p4 == 1)
+            transitions += (p4 == 0) & (p5 == 1)
+            transitions += (p5 == 0) & (p6 == 1)
+            transitions += (p6 == 0) & (p7 == 1)
+            transitions += (p7 == 0) & (p8 == 1)
+            transitions += (p8 == 0) & (p9 == 1)
+            transitions += (p9 == 0) & (p2 == 1)
 
             condition_a = (n_neighbors >= 2) & (n_neighbors <= 6)
             condition_b = transitions == 1
@@ -70,4 +66,5 @@ def zhang_suen_thinning(binary: np.ndarray) -> np.ndarray:
                 deleted_any = True
         if not deleted_any:
             break
-    return img.astype(bool)
+    result[top:bottom, left:right] = img.astype(bool)
+    return result

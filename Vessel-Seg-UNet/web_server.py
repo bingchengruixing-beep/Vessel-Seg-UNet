@@ -6,6 +6,7 @@ import copy
 import logging
 import os
 import threading
+from collections import OrderedDict
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -21,6 +22,7 @@ from inference import VesselSegmentor
 from src.config import ConfigError, load_config, resolve_checkpoint_dir, resolve_data_path, save_config
 from src.dataset import get_dataloaders
 from src.dataset import VesselDataset
+from src.frangi import vesselness
 from src.metrics import calculate_dice, calculate_iou, calculate_precision, calculate_recall
 from src.models import build_model_from_config
 from src.prediction import main_logits_from_output, postprocess_predictions
@@ -58,8 +60,17 @@ training_state = {
     "history": [],
     "log_path": "",
     "message": "就绪",
+    "frangi_running": False,
+    "frangi_stop_requested": False,
+    "frangi_progress": "",
+    "frangi_train_done": 0,
+    "frangi_train_total": 0,
+    "frangi_val_done": 0,
+    "frangi_val_total": 0,
+    "frangi_result": None,
 }
-inference_cache = {"path": None, "mtime_ns": None, "segmentor": None}
+inference_cache: OrderedDict[tuple[str, int], VesselSegmentor] = OrderedDict()
+MAX_CACHED_MODELS = 5
 
 
 def _snapshot_state():
@@ -79,17 +90,27 @@ def _save_config(payload):
 
 
 def _safe_checkpoint_name(filename: str) -> str:
-    candidate = Path(filename)
-    if not filename or candidate.name != filename or candidate.suffix.lower() != ".pth":
+    normalized = str(filename).replace("\\", "/")
+    candidate = Path(normalized)
+    if (
+        not normalized
+        or candidate.is_absolute()
+        or candidate.suffix.lower() != ".pth"
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
         raise ValueError("Invalid checkpoint filename")
-    return filename
+    return normalized
 
 
 def _checkpoint_path(filename: str) -> Path:
     safe_name = _safe_checkpoint_name(filename)
     directories = _checkpoint_directories(_load_config())
     for directory in directories:
-        candidate = directory / safe_name
+        candidate = (directory / safe_name).resolve()
+        try:
+            candidate.relative_to(directory.resolve())
+        except ValueError:
+            continue
         if candidate.is_file():
             return candidate
     return directories[0] / safe_name
@@ -170,6 +191,14 @@ def run_training():
         model_cfg = config["model"]
         model = build_model_from_config(model_cfg)
         optimizer = build_optimizer(model, config)
+        checkpoint_dir = resolve_checkpoint_dir(config, PROJECT_ROOT)
+        cross_validation_cfg = config["dataset"].get("cross_validation", {})
+        if cross_validation_cfg.get("enabled", False):
+            checkpoint_dir = checkpoint_dir / (
+                f"fold_{int(cross_validation_cfg['fold_index']) + 1}"
+                f"_of_{int(cross_validation_cfg['num_folds'])}"
+            )
+            _append_training_log(log_path, f"当前折权重目录: {checkpoint_dir}")
         trainer = Trainer(
             model=model,
             train_loader=train_loader,
@@ -178,7 +207,7 @@ def run_training():
             optimizer=optimizer,
             scheduler=build_scheduler(optimizer, config),
             config=config,
-            checkpoint_dir=resolve_checkpoint_dir(config, PROJECT_ROOT),
+            checkpoint_dir=checkpoint_dir,
             on_epoch_end=_on_epoch_end,
             on_batch_end=_on_batch_end,
             should_stop=_stop_requested,
@@ -263,10 +292,34 @@ def dataset_info():
             return 0
         return sum(item.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} for item in path.iterdir())
 
+    train_count = image_count(dataset_cfg["train_image_dir"])
+    val_count = image_count(dataset_cfg["val_image_dir"])
+    split_strategy = "使用独立训练集和验证集"
+    cross_validation_cfg = dataset_cfg.get("cross_validation", {})
+    if cross_validation_cfg.get("enabled", False):
+        train_loader, val_loader = get_dataloaders(config, project_root=PROJECT_ROOT)
+        train_count = len(train_loader.dataset)
+        val_count = len(val_loader.dataset)
+        split_strategy = (
+            f"按序列分组 {cross_validation_cfg['num_folds']} 折，"
+            f"当前第 {int(cross_validation_cfg['fold_index']) + 1} 折"
+        )
+    domain_balance_cfg = dataset_cfg.get("domain_balance", {})
+    if domain_balance_cfg.get("enabled", False):
+        split_strategy += (
+            f"；每轮目标域期望占比 "
+            f"{float(domain_balance_cfg['target_probability']) * 100:.0f}%"
+        )
+    if dataset_cfg.get("temporal_2_5d", {}).get("enabled", False):
+        split_strategy += "；2.5D 前/中/后三时相输入"
     return jsonify({
-        "train": {"count": image_count(dataset_cfg["train_image_dir"]), "path": dataset_cfg["train_image_dir"]},
-        "val": {"count": image_count(dataset_cfg["val_image_dir"]), "path": dataset_cfg["val_image_dir"]},
-        "split_strategy": "按当前训练/验证路径使用，不自动重分层",
+        "train": {"count": train_count, "path": dataset_cfg["train_image_dir"]},
+        "val": {"count": val_count, "path": (
+            dataset_cfg["train_image_dir"]
+            if cross_validation_cfg.get("enabled", False)
+            else dataset_cfg["val_image_dir"]
+        )},
+        "split_strategy": split_strategy,
     })
 
 
@@ -329,18 +382,19 @@ def list_checkpoints():
     for directory in _checkpoint_directories(_load_config()):
         if not directory.exists():
             continue
-        for file in directory.iterdir():
-            if file.is_file() and file.suffix.lower() == ".pth" and file.name not in seen_names:
+        for file in directory.rglob("*.pth"):
+            relative_name = file.relative_to(directory).as_posix()
+            if file.is_file() and file.suffix.lower() == ".pth" and relative_name not in seen_names:
                 checkpoints.append({
-                    "name": file.name,
+                    "name": relative_name,
                     "size": file.stat().st_size,
                     "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat(),
                 })
-                seen_names.add(file.name)
+                seen_names.add(relative_name)
     return jsonify(sorted(checkpoints, key=lambda item: item["modified"], reverse=True))
 
 
-@app.route("/api/checkpoints/<filename>", methods=["DELETE"])
+@app.route("/api/checkpoints/<path:filename>", methods=["DELETE"])
 def delete_checkpoint(filename):
     try:
         path = _checkpoint_path(filename)
@@ -362,35 +416,22 @@ def run_inference():
 def _run_inference():
     payload = request.get_json(silent=True) or {}
     try:
-        image_b64 = payload["image_base64"]
-        checkpoint_name = _safe_checkpoint_name(payload.get("checkpoint", "best_model.pth"))
+        checkpoint_names = _requested_checkpoint_names(payload)
         threshold = float(payload.get("threshold", 0.5))
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
-        image_bytes = base64.b64decode(image_b64, validate=True)
-        image = Image.open(BytesIO(image_bytes)).convert("L")
-        if image.width * image.height > Image.MAX_IMAGE_PIXELS:
-            raise ValueError("image is too large")
-        model_path = _checkpoint_path(checkpoint_name)
-        if not model_path.is_file():
-            return jsonify({"error": f"检查点未找到: {checkpoint_name}"}), 404
-
-        mtime_ns = model_path.stat().st_mtime_ns
-        if inference_cache["path"] != model_path or inference_cache["mtime_ns"] != mtime_ns:
-            inference_cache.update({
-                "path": model_path,
-                "mtime_ns": mtime_ns,
-                "segmentor": VesselSegmentor(str(model_path), config=_load_config()),
-            })
-        segmentor = inference_cache["segmentor"]
-        segmentor.threshold = threshold
+        image = _decode_inference_input(payload)
+        probability, segmentor = _predict_ensemble_probability(image, checkpoint_names)
         _apply_processing_options(segmentor, payload)
-        mask = segmentor.predict_array(np.asarray(image))
+        mask = _mask_from_probability(probability, threshold, segmentor.postprocess_config)
         buffer = BytesIO()
         Image.fromarray(mask).save(buffer, format="PNG")
-        return jsonify({"mask_base64": base64.b64encode(buffer.getvalue()).decode("ascii")})
+        return jsonify({
+            "mask_base64": base64.b64encode(buffer.getvalue()).decode("ascii"),
+            "checkpoints": checkpoint_names,
+        })
     except KeyError:
-        return jsonify({"error": "未提供 image_base64"}), 400
+        return jsonify({"error": "未提供 image_base64 或 temporal_images"}), 400
     except (ValueError, binascii.Error, OSError) as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -398,19 +439,94 @@ def _run_inference():
         return jsonify({"error": str(exc)}), 500
 
 
+def _requested_checkpoint_names(payload: dict) -> list[str]:
+    """解析单权重或最多五个集成权重。"""
+    raw_names = payload.get("checkpoints")
+    if raw_names is None:
+        raw_names = [payload.get("checkpoint", "best_model.pth")]
+    if not isinstance(raw_names, list) or not raw_names or len(raw_names) > 5:
+        raise ValueError("checkpoints 必须包含 1 到 5 个权重")
+    names = []
+    for value in raw_names:
+        name = _safe_checkpoint_name(str(value))
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _decode_base64_gray(encoded: str) -> np.ndarray:
+    """解码网页上传的单张灰度图。"""
+    image_bytes = base64.b64decode(encoded, validate=True)
+    image = Image.open(BytesIO(image_bytes)).convert("L")
+    if image.width * image.height > Image.MAX_IMAGE_PIXELS:
+        raise ValueError("image is too large")
+    return np.asarray(image)
+
+
+def _decode_inference_input(payload: dict) -> np.ndarray:
+    """读取单图，或读取前/当前/后三张时相图。"""
+    temporal_images = payload.get("temporal_images")
+    if temporal_images is None:
+        return _decode_base64_gray(payload["image_base64"])
+    if not isinstance(temporal_images, list) or len(temporal_images) != 3:
+        raise ValueError("temporal_images 必须恰好包含前、当前、后三张图像")
+    frames = [_decode_base64_gray(str(value)) for value in temporal_images]
+    if any(frame.shape != frames[1].shape for frame in frames):
+        raise ValueError("前、当前、后三张时相图尺寸必须一致")
+    return np.stack(frames, axis=-1)
+
+
 def _get_cached_segmentor(checkpoint_name: str) -> VesselSegmentor:
-    """按检查点修改时间缓存模型，确保不同架构权重不会混用。"""
+    """按检查点修改时间维护最多五个模型的 LRU 缓存。"""
     model_path = _checkpoint_path(checkpoint_name)
     if not model_path.is_file():
         raise FileNotFoundError(f"检查点未找到: {checkpoint_name}")
     mtime_ns = model_path.stat().st_mtime_ns
-    if inference_cache["path"] != model_path or inference_cache["mtime_ns"] != mtime_ns:
-        inference_cache.update({
-            "path": model_path,
-            "mtime_ns": mtime_ns,
-            "segmentor": VesselSegmentor(str(model_path), config=_load_config()),
-        })
-    return inference_cache["segmentor"]
+    cache_key = (str(model_path), mtime_ns)
+    segmentor = inference_cache.get(cache_key)
+    if segmentor is None:
+        stale_keys = [key for key in inference_cache if key[0] == str(model_path)]
+        for key in stale_keys:
+            del inference_cache[key]
+        segmentor = VesselSegmentor(str(model_path), config=_load_config())
+        inference_cache[cache_key] = segmentor
+        while len(inference_cache) > MAX_CACHED_MODELS:
+            inference_cache.popitem(last=False)
+    else:
+        inference_cache.move_to_end(cache_key)
+    return segmentor
+
+
+def _predict_ensemble_probability(
+    image: np.ndarray,
+    checkpoint_names: list[str],
+) -> tuple[np.ndarray, VesselSegmentor]:
+    """逐模型恢复到原图后平均概率，兼容不同输入尺寸与通道数。"""
+    probability_sum = None
+    reference_segmentor = None
+    for checkpoint_name in checkpoint_names:
+        segmentor = _get_cached_segmentor(checkpoint_name)
+        probability = segmentor.predict_probability_array(image)
+        if probability_sum is None:
+            probability_sum = probability.astype(np.float32, copy=True)
+            reference_segmentor = segmentor
+        else:
+            if probability.shape != probability_sum.shape:
+                raise ValueError("集成权重恢复后的概率图尺寸不一致")
+            probability_sum += probability
+    return probability_sum / len(checkpoint_names), reference_segmentor
+
+
+def _mask_from_probability(
+    probability: np.ndarray,
+    threshold: float,
+    postprocess_config: dict,
+) -> np.ndarray:
+    """对集成概率统一阈值化，并只执行一次后处理。"""
+    prediction = torch.from_numpy((probability > threshold).astype(np.float32))[None, None]
+    if postprocess_config.get("enabled", False):
+        prediction = postprocess_predictions(prediction, postprocess_config)
+    return prediction[0, 0].numpy().astype(np.uint8) * 255
 
 
 def _apply_processing_options(segmentor: VesselSegmentor, payload: dict) -> None:
@@ -451,33 +567,38 @@ def _apply_processing_options(segmentor: VesselSegmentor, payload: dict) -> None
 
 @app.route("/api/inference-batch", methods=["POST"])
 def run_batch_inference():
-    """对网页上传的多张图像使用同一检查点批量推理。"""
+    """对网页上传的多张图像使用相同权重集成批量推理。"""
     with INFERENCE_LOCK:
         payload = request.get_json(silent=True) or {}
         try:
-            checkpoint_name = _safe_checkpoint_name(payload.get("checkpoint", "best_model.pth"))
+            checkpoint_names = _requested_checkpoint_names(payload)
             threshold = float(payload.get("threshold", 0.5))
             images = payload.get("images")
             if not isinstance(images, list) or not images or len(images) > 32:
                 raise ValueError("images 必须包含 1 到 32 张图像")
             if not 0.0 <= threshold <= 1.0:
                 raise ValueError("threshold must be between 0 and 1")
-            segmentor = _get_cached_segmentor(checkpoint_name)
-            segmentor.threshold = threshold
-            _apply_processing_options(segmentor, payload)
             results = []
             for item in images:
                 if not isinstance(item, dict) or "image_base64" not in item:
                     raise ValueError("每个图像项都必须包含 image_base64")
-                image = Image.open(BytesIO(base64.b64decode(item["image_base64"], validate=True))).convert("L")
-                mask = segmentor.predict_array(np.asarray(image))
+                image = _decode_base64_gray(item["image_base64"])
+                probability, segmentor = _predict_ensemble_probability(image, checkpoint_names)
+                _apply_processing_options(segmentor, payload)
+                mask = _mask_from_probability(
+                    probability, threshold, segmentor.postprocess_config
+                )
                 buffer = BytesIO()
                 Image.fromarray(mask).save(buffer, format="PNG")
                 results.append({
                     "name": str(item.get("name", f"image_{len(results) + 1}")),
                     "mask_base64": base64.b64encode(buffer.getvalue()).decode("ascii"),
                 })
-            return jsonify({"results": results, "count": len(results)})
+            return jsonify({
+                "results": results,
+                "count": len(results),
+                "checkpoints": checkpoint_names,
+            })
         except (ValueError, binascii.Error, OSError) as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
@@ -493,94 +614,150 @@ def threshold_scan():
             return jsonify({"success": False, "error": "训练正在运行，请先停止训练再扫描阈值"}), 409
     try:
         payload = request.get_json(silent=True) or {}
-        checkpoint_name = _safe_checkpoint_name(payload.get("checkpoint", "best_model.pth"))
-        raw_thresholds = payload.get("thresholds", [round(0.30 + index * 0.01, 2) for index in range(51)])
-        if not isinstance(raw_thresholds, list):
-            raise ValueError("thresholds 必须是数字列表")
-        thresholds = sorted({float(value) for value in raw_thresholds})
-        if not thresholds or len(thresholds) > 101 or any(not 0.0 <= value <= 1.0 for value in thresholds):
-            raise ValueError("阈值数量必须为 1 到 101 个，且每个值在 0 到 1 之间")
+        checkpoint_names = _requested_checkpoint_names(payload)
+        adaptive_scan = bool(payload.get("adaptive_scan", False))
+
+        def threshold_grid(start: float, end: float, step: float) -> list[float]:
+            """生成包含端点的稳定浮点阈值网格。"""
+            values = []
+            index = 0
+            while start + index * step <= end + 1e-9:
+                values.append(round(start + index * step, 2))
+                index += 1
+            if not values or values[-1] < end - 1e-9:
+                values.append(round(end, 2))
+            return sorted(set(values))
+
+        if adaptive_scan:
+            scan_start = float(payload.get("scan_start", 0.30))
+            scan_end = float(payload.get("scan_end", 0.80))
+            coarse_step = float(payload.get("coarse_step", 0.05))
+            fine_step = float(payload.get("fine_step", 0.01))
+            if not 0.0 <= scan_start < scan_end <= 1.0:
+                raise ValueError("粗扫范围必须满足 0 <= 起点 < 终点 <= 1")
+            if not 0.0 < fine_step <= coarse_step <= 1.0:
+                raise ValueError("精扫步长必须大于 0 且不大于粗扫步长")
+            thresholds = threshold_grid(scan_start, scan_end, coarse_step)
+        else:
+            raw_thresholds = payload.get("thresholds", [round(0.30 + index * 0.01, 2) for index in range(51)])
+            if not isinstance(raw_thresholds, list):
+                raise ValueError("thresholds 必须是数字列表")
+            thresholds = sorted({float(value) for value in raw_thresholds})
+            if not thresholds or len(thresholds) > 101 or any(not 0.0 <= value <= 1.0 for value in thresholds):
+                raise ValueError("阈值数量必须为 1 到 101 个，且每个值在 0 到 1 之间")
 
         config = _load_config()
-        dataset_cfg = config["dataset"]
-        dataset = VesselDataset(
-            image_dir=str(resolve_data_path(dataset_cfg["val_image_dir"], PROJECT_ROOT)),
-            mask_dir=str(resolve_data_path(dataset_cfg["val_mask_dir"], PROJECT_ROOT)),
-            transform=get_val_transforms(dataset_cfg["img_size"], dataset_cfg["keep_aspect_ratio"]),
-        )
-        loader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=max(int(config["training"]["batch_size"]), 1),
-            shuffle=False,
-            num_workers=0,
-            pin_memory=False,
-        )
-        segmentor = _get_cached_segmentor(checkpoint_name)
-        segmentor.model.eval()
-        _apply_processing_options(segmentor, payload)
+        evaluation_split = str(payload.get("evaluation_split", "dias_external"))
+        if evaluation_split not in {"dias_external", "fold_validation"}:
+            raise ValueError("evaluation_split 必须是 dias_external 或 fold_validation")
+        evaluation_config = copy.deepcopy(config)
+        if evaluation_split == "dias_external":
+            # 阈值可比性优先使用独立 DIAS 验证集，不受当前 K 折开关影响。
+            evaluation_config["dataset"]["cross_validation"]["enabled"] = False
+            evaluation_label = "DIAS 外部验证集"
+        else:
+            evaluation_label = "当前 K 折验证集"
+        _, val_loader = get_dataloaders(evaluation_config, project_root=PROJECT_ROOT)
+        dataset = val_loader.dataset
         totals = {
             threshold: {"dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
             for threshold in thresholds
         }
         sample_count = 0
 
-        def accumulate_scores(probability, target):
+        def accumulate_scores(probability, target, target_totals, target_thresholds):
             nonlocal sample_count
-            for threshold in thresholds:
+            for threshold in target_thresholds:
                 prediction = (probability > threshold).float()
                 if segmentor.postprocess_config["enabled"]:
                     prediction = postprocess_predictions(prediction, segmentor.postprocess_config)
-                totals[threshold]["dice"] += calculate_dice(prediction, target)
-                totals[threshold]["iou"] += calculate_iou(prediction, target)
-                totals[threshold]["precision"] += calculate_precision(prediction, target)
-                totals[threshold]["recall"] += calculate_recall(prediction, target)
-            sample_count += 1
+                target_totals[threshold]["dice"] += calculate_dice(prediction, target)
+                target_totals[threshold]["iou"] += calculate_iou(prediction, target)
+                target_totals[threshold]["precision"] += calculate_precision(prediction, target)
+                target_totals[threshold]["recall"] += calculate_recall(prediction, target)
 
+        cached_samples = []
         with torch.inference_mode():
-            if segmentor.patch_config.get("enabled", False):
-                image_dir = Path(resolve_data_path(dataset_cfg["val_image_dir"], PROJECT_ROOT))
-                mask_dir = Path(resolve_data_path(dataset_cfg["val_mask_dir"], PROJECT_ROOT))
-                for filename in dataset.filenames:
-                    image_buffer = np.fromfile(image_dir / filename, dtype=np.uint8)
-                    mask_buffer = np.fromfile(mask_dir / filename, dtype=np.uint8)
-                    image = cv2.imdecode(image_buffer, cv2.IMREAD_GRAYSCALE)
-                    mask = cv2.imdecode(mask_buffer, cv2.IMREAD_GRAYSCALE)
-                    if image is None or mask is None:
-                        raise OSError(f"无法读取验证图像或掩膜: {filename}")
-                    mask = (mask > 127).astype(np.float32)
-                    probability = torch.from_numpy(segmentor.predict_probability_array(image)).float()[None, None]
-                    target = torch.from_numpy(mask).float()[None, None]
-                    accumulate_scores(probability, target)
-            else:
-                for images, masks in loader:
-                    images = images.to(segmentor.device)
-                    masks = masks.to(segmentor.device)
-                    probabilities = torch.sigmoid(main_logits_from_output(segmentor.model(images)))
-                    for index in range(images.shape[0]):
-                        accumulate_scores(
-                            probabilities[index:index + 1],
-                            masks[index:index + 1],
-                        )
+            for filename in dataset.filenames:
+                image = dataset.load_input_image(filename)
+                mask_buffer = np.fromfile(Path(dataset.mask_dir) / filename, dtype=np.uint8)
+                mask = cv2.imdecode(mask_buffer, cv2.IMREAD_GRAYSCALE)
+                if mask is None:
+                    raise OSError(f"无法读取验证掩膜: {filename}")
+                probability_array, segmentor = _predict_ensemble_probability(
+                    image, checkpoint_names
+                )
+                _apply_processing_options(segmentor, payload)
+                probability = torch.from_numpy(probability_array).float()[None, None]
+                target = torch.from_numpy((mask > 127).astype(np.float32))[None, None]
+                accumulate_scores(probability, target, totals, thresholds)
+                if adaptive_scan:
+                    # 只缓存自适应扫描所需的概率和掩膜，避免第二次占用 GPU 推理。
+                    cached_samples.append((probability_array.astype(np.float16), (mask > 127).astype(np.uint8)))
+                sample_count += 1
         divisor = max(sample_count, 1)
-        results = [
+        coarse_results = [
             {"threshold": threshold, **{name: values[name] / divisor for name in values}}
             for threshold, values in totals.items()
         ]
+        fine_results = []
+        fine_start = fine_end = None
+        if adaptive_scan:
+            coarse_best = max(coarse_results, key=lambda item: item["dice"])
+            fine_start = max(scan_start, float(coarse_best["threshold"]) - coarse_step)
+            fine_end = min(scan_end, float(coarse_best["threshold"]) + coarse_step)
+            fine_thresholds = threshold_grid(fine_start, fine_end, fine_step)
+            fine_totals = {
+                threshold: {"dice": 0.0, "iou": 0.0, "precision": 0.0, "recall": 0.0}
+                for threshold in fine_thresholds
+            }
+            for probability_array, mask_array in cached_samples:
+                probability = torch.from_numpy(probability_array.astype(np.float32))[None, None]
+                target = torch.from_numpy(mask_array.astype(np.float32))[None, None]
+                accumulate_scores(probability, target, fine_totals, fine_thresholds)
+            fine_results = [
+                {"threshold": threshold, **{name: value / divisor for name, value in metrics.items()}}
+                for threshold, metrics in fine_totals.items()
+            ]
+
+        result_by_threshold = {item["threshold"]: item for item in coarse_results}
+        result_by_threshold.update({item["threshold"]: item for item in fine_results})
+        results = sorted(result_by_threshold.values(), key=lambda item: item["threshold"])
         best = max(results, key=lambda item: item["dice"])
         return jsonify({
             "success": True,
-            "checkpoint": checkpoint_name,
+            "checkpoints": checkpoint_names,
             "device": str(segmentor.device),
             "samples": sample_count,
             "results": results,
             "best_threshold": best["threshold"],
             "best_dice": best["dice"],
+            "scan_mode": "coarse_fine" if adaptive_scan else "custom",
+            "coarse_best_threshold": max(coarse_results, key=lambda item: item["dice"])["threshold"],
+            "fine_range": ([round(fine_start, 2), round(fine_end, 2)] if adaptive_scan else None),
+            "evaluation_split": evaluation_split,
+            "evaluation_label": evaluation_label,
+            "evaluation_path": str(Path(dataset.image_dir).resolve()),
         })
     except (ConfigError, ValueError, OSError) as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:
         logger.exception("Threshold scan failed")
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/api/frangi/status", methods=["GET"])
+def frangi_status():
+    with STATE_LOCK:
+        return jsonify({
+            "running": training_state.get("frangi_running", False),
+            "progress": training_state.get("frangi_progress", ""),
+            "train_done": training_state.get("frangi_train_done", 0),
+            "train_total": training_state.get("frangi_train_total", 0),
+            "val_done": training_state.get("frangi_val_done", 0),
+            "val_total": training_state.get("frangi_val_total", 0),
+            "result": training_state.get("frangi_result"),
+        })
 
 
 @app.route("/api/system", methods=["GET"])
@@ -602,6 +779,169 @@ def payload_too_large(_error):
     return jsonify({"error": "上传图片超过 10 MB 限制"}), 413
 
 
+@app.route("/api/frangi/generate", methods=["POST"])
+def generate_frangi_maps():
+    """在服务端为训练集和验证集批量生成 Frangi vesselness 增强图（后台线程）。"""
+    with STATE_LOCK:
+        if training_state.get("frangi_running"):
+            return jsonify({"success": False, "message": "Frangi 生成正在进行中"}), 409
+        training_state["frangi_running"] = True
+        training_state["frangi_stop_requested"] = False
+        training_state["frangi_progress"] = "准备中..."
+        training_state["frangi_train_done"] = 0
+        training_state["frangi_train_total"] = 0
+        training_state["frangi_val_done"] = 0
+        training_state["frangi_val_total"] = 0
+
+    payload = request.get_json(silent=True) or {}
+    config = _load_config()
+    if payload:
+        config = payload
+
+    def _run():
+        try:
+            dataset_cfg = config["dataset"]
+            frangi_cfg = dataset_cfg.get("frangi", {})
+            method = str(frangi_cfg.get("method", "hessian"))
+            sigmas = tuple(float(s) for s in frangi_cfg.get("sigmas", [1.0, 2.0, 3.0, 4.0, 5.0]))
+            beta = float(frangi_cfg.get("beta", 0.5))
+            c_raw = frangi_cfg.get("c", 0)
+            c = float(c_raw) if c_raw and float(c_raw) > 0 else None
+
+            train_count = 0
+            val_count = 0
+
+            for key in ("train", "val"):
+                image_dir = resolve_data_path(
+                    dataset_cfg[f"{key}_image_dir"], PROJECT_ROOT
+                )
+                frangi_dir_raw = frangi_cfg.get(f"{key}_frangi_dir", "")
+                if frangi_dir_raw:
+                    frangi_dir = resolve_data_path(frangi_dir_raw, PROJECT_ROOT)
+                else:
+                    frangi_dir = image_dir.parent / "frangi"
+                frangi_dir.mkdir(parents=True, exist_ok=True)
+
+                if not image_dir.is_dir():
+                    continue
+
+                items = sorted([
+                    item for item in image_dir.iterdir()
+                    if item.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+                ])
+                total = len(items)
+
+                with STATE_LOCK:
+                    training_state["frangi_progress"] = f"正在处理{key}集..."
+                    if key == "train":
+                        training_state["frangi_train_total"] = total
+                    else:
+                        training_state["frangi_val_total"] = total
+
+                for i, item in enumerate(items):
+                    # 检查停止请求
+                    with STATE_LOCK:
+                        if training_state.get("frangi_stop_requested"):
+                            training_state["frangi_progress"] = f"已停止（{key}集处理了 {i}/{total} 张）"
+                            return
+                    buf = np.fromfile(str(item), dtype=np.uint8)
+                    image = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+                    if image is None:
+                        continue
+                    vesselness_map = vesselness(image, sigmas=sigmas, method=method, beta=beta, c=c)
+                    vesselness_16u = (vesselness_map * 65535.0).astype(np.uint16)
+                    out_path = frangi_dir / item.name
+                    # 使用 imencode + tofile 支持中文路径
+                    success, encoded = cv2.imencode(".png", vesselness_16u)
+                    if success:
+                        encoded.tofile(str(out_path))
+                        if key == "train":
+                            train_count += 1
+                        else:
+                            val_count += 1
+                    with STATE_LOCK:
+                        if key == "train":
+                            training_state["frangi_train_done"] = i + 1
+                        else:
+                            training_state["frangi_val_done"] = i + 1
+
+            with STATE_LOCK:
+                training_state["frangi_progress"] = f"完成！训练集 {train_count} 张，验证集 {val_count} 张"
+                training_state["frangi_result"] = {
+                    "train_count": train_count,
+                    "val_count": val_count,
+                }
+        except Exception as exc:
+            logger.exception("Frangi generation failed")
+            with STATE_LOCK:
+                training_state["frangi_progress"] = f"失败: {exc}"
+        finally:
+            with STATE_LOCK:
+                training_state["frangi_running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"success": True, "message": "Frangi 生成已开始"})
+
+
+@app.route("/api/frangi/stop", methods=["POST"])
+def stop_frangi_generation():
+    """请求停止正在进行的 Frangi 生成任务。"""
+    with STATE_LOCK:
+        if not training_state.get("frangi_running"):
+            return jsonify({"success": False, "message": "没有正在进行的 Frangi 生成任务"}), 409
+        training_state["frangi_stop_requested"] = True
+        training_state["frangi_progress"] = "正在停止..."
+    return jsonify({"success": True, "message": "停止请求已发送，正在安全停止..."})
+
+
+@app.route("/api/frangi/clear", methods=["POST"])
+def clear_frangi_maps():
+    """清空 Frangi 增强图目录中的所有图像。"""
+    config = _load_config()
+    payload = request.get_json(silent=True) or {}
+    if payload:
+        config = payload
+
+    with STATE_LOCK:
+        if training_state.get("frangi_running"):
+            return jsonify({"success": False, "message": "Frangi 生成正在进行中，请先停止"}), 409
+
+    dataset_cfg = config["dataset"]
+    frangi_cfg = dataset_cfg.get("frangi", {})
+    deleted_train = 0
+    deleted_val = 0
+
+    for key in ("train", "val"):
+        image_dir = resolve_data_path(dataset_cfg[f"{key}_image_dir"], PROJECT_ROOT)
+        frangi_dir_raw = frangi_cfg.get(f"{key}_frangi_dir", "")
+        if frangi_dir_raw:
+            frangi_dir = resolve_data_path(frangi_dir_raw, PROJECT_ROOT)
+        else:
+            frangi_dir = image_dir.parent / "frangi"
+
+        if not frangi_dir.is_dir():
+            continue
+
+        for item in frangi_dir.iterdir():
+            if item.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}:
+                try:
+                    item.unlink()
+                    if key == "train":
+                        deleted_train += 1
+                    else:
+                        deleted_val += 1
+                except OSError:
+                    pass
+
+    return jsonify({
+        "success": True,
+        "message": f"已清空：训练集 {deleted_train} 张，验证集 {deleted_val} 张",
+        "train_deleted": deleted_train,
+        "val_deleted": deleted_val,
+    })
+
+
 if __name__ == "__main__":
-    logger.info("Starting local Vessel-Seg-UNet server at http://127.0.0.1:5001")
-    app.run(host="127.0.0.1", port=5001, debug=False, threaded=True)
+    port = int(os.environ.get("VESSEL_WEB_PORT", "5001"))
+    logger.info("Starting local Vessel-Seg-UNet server at http://127.0.0.1:%s", port)
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

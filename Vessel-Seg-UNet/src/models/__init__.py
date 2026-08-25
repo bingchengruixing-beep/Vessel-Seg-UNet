@@ -33,11 +33,13 @@ def build_model_from_config(model_config: dict) -> nn.Module:
         kwargs.update(
             encoder_name=model_config.get("encoder_name", "resnet34"),
             pretrained=bool(model_config.get("pretrained", True)),
+            temporal_input=model_config.get("input_mode") == "temporal",
         )
     elif model_name in {"resunet_aspp", "vessel_fusion"}:
         kwargs.update(
             pretrained=bool(model_config.get("pretrained", True)),
             deep_supervision=bool(model_config.get("deep_supervision", True)),
+            temporal_input=model_config.get("input_mode") == "temporal",
         )
     return build_model(model_name, **kwargs)
 

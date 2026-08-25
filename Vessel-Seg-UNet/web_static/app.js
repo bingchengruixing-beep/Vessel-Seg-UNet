@@ -44,7 +44,28 @@
         cfgValMaskDir: document.getElementById('cfg-val-mask-dir'),
         cfgImgSize: document.getElementById('cfg-img-size'),
         cfgNumWorkers: document.getElementById('cfg-num-workers'),
+        cfgPersistentWorkers: document.getElementById('cfg-persistent-workers'),
+        cfgPrefetchFactor: document.getElementById('cfg-prefetch-factor'),
+        cfgCacheSize: document.getElementById('cfg-cache-size'),
         cfgElasticTransform: document.getElementById('cfg-elastic-transform'),
+        cfgDomainBalanceEnabled: document.getElementById('cfg-domain-balance-enabled'),
+        cfgDomainBalanceGroup: document.getElementById('cfg-domain-balance-group'),
+        cfgDomainTargetProbability: document.getElementById('cfg-domain-target-probability'),
+        cfgCrossValidationEnabled: document.getElementById('cfg-cross-validation-enabled'),
+        cfgCrossValidationGroup: document.getElementById('cfg-cross-validation-group'),
+        cfgNumFolds: document.getElementById('cfg-num-folds'),
+        cfgFoldIndex: document.getElementById('cfg-fold-index'),
+        cfgTemporalEnabled: document.getElementById('cfg-temporal-enabled'),
+        cfgFrangiEnabled: document.getElementById('cfg-frangi-enabled'),
+        cfgFrangiGroup: document.getElementById('cfg-frangi-group'),
+        cfgTrainFrangiDir: document.getElementById('cfg-train-frangi-dir'),
+        cfgValFrangiDir: document.getElementById('cfg-val-frangi-dir'),
+        cfgFrangiSigmas: document.getElementById('cfg-frangi-sigmas'),
+        cfgFrangiMethod: document.getElementById('cfg-frangi-method'),
+        btnGenerateFrangi: document.getElementById('btn-generate-frangi'),
+        btnStopFrangi: document.getElementById('btn-stop-frangi'),
+        btnClearFrangi: document.getElementById('btn-clear-frangi'),
+        frangiGenerateStatus: document.getElementById('frangi-generate-status'),
         cfgPatchEnabled: document.getElementById('cfg-patch-enabled'),
         cfgPatchSize: document.getElementById('cfg-patch-size'),
         cfgPatchForegroundProbability: document.getElementById('cfg-patch-foreground-probability'),
@@ -85,12 +106,17 @@
         infOriginal: document.getElementById('inference-original'),
         infResult: document.getElementById('inference-result'),
         infCheckpoint: document.getElementById('inference-checkpoint'),
+        infInputMode: document.getElementById('inference-input-mode'),
         infThreshold: document.getElementById('inference-threshold'),
         infThresholdValue: document.getElementById('inference-threshold-value'),
         infProcessing: document.getElementById('inference-processing'),
         infProcessingHint: document.getElementById('inference-processing-hint'),
         btnRunInference: document.getElementById('btn-run-inference'),
         thresholdScanValues: document.getElementById('threshold-scan-values'),
+        thresholdEvaluationSplit: document.getElementById('threshold-evaluation-split'),
+        thresholdScanMode: document.getElementById('threshold-scan-mode'),
+        thresholdCoarseStep: document.getElementById('threshold-coarse-step'),
+        thresholdFineStep: document.getElementById('threshold-fine-step'),
         btnThresholdScan: document.getElementById('btn-threshold-scan'),
         thresholdScanStatus: document.getElementById('threshold-scan-status'),
         thresholdScanBest: document.getElementById('threshold-scan-best'),
@@ -195,16 +221,41 @@
         setupTabs();
         setupCharts();
         setupEventListeners();
-        
+
         try {
             await fetchSystemInfo();
             await fetchDatasetInfo();
             await fetchConfig();
             await fetchCheckpoints();
             await checkTrainingStatus();
+            await checkFrangiStatus();
         } catch (error) {
             console.error('Initialization error:', error);
             showToast('初始化数据加载失败', 'error');
+        }
+    }
+
+    // 页面加载时检查 Frangi 生成状态
+    async function checkFrangiStatus() {
+        try {
+            const res = await fetch('/api/frangi/status');
+            const data = await res.json();
+            if (data.running) {
+                // 有正在运行的生成任务，显示停止按钮并开始轮询
+                if (els.btnGenerateFrangi) {
+                    els.btnGenerateFrangi.disabled = true;
+                    els.btnGenerateFrangi.textContent = '⏳ 生成中...';
+                }
+                if (els.btnStopFrangi) {
+                    els.btnStopFrangi.style.display = '';
+                }
+                if (els.frangiGenerateStatus) {
+                    els.frangiGenerateStatus.textContent = data.progress || '处理中...';
+                }
+                pollFrangiProgress();
+            }
+        } catch (e) {
+            // 忽略
         }
     }
 
@@ -305,7 +356,9 @@
             }
 
             if (els.infCheckpoint) {
-                const currentSelection = els.infCheckpoint.value;
+                const currentSelections = new Set(
+                    Array.from(els.infCheckpoint.selectedOptions).map(option => option.value)
+                );
                 els.infCheckpoint.innerHTML = '';
                 if (data.length === 0) {
                     const opt = document.createElement('option');
@@ -314,16 +367,16 @@
                     els.infCheckpoint.appendChild(opt);
                 } else {
                     let found = false;
-                    data.forEach(cp => {
+                    data.forEach((cp, index) => {
                         const opt = document.createElement('option');
                         opt.value = cp.name;
                         opt.textContent = cp.name;
+                        opt.selected = currentSelections.has(cp.name) || (
+                            currentSelections.size === 0 && index === 0
+                        );
                         els.infCheckpoint.appendChild(opt);
-                        if (cp.name === currentSelection) found = true;
+                        if (currentSelections.has(cp.name)) found = true;
                     });
-                    if (found) {
-                        els.infCheckpoint.value = currentSelection;
-                    }
                 }
             }
         } catch (e) {
@@ -356,7 +409,31 @@
         setVal(els.cfgValMaskDir, cfg.dataset?.val_mask_dir || '');
         setVal(els.cfgImgSize, cfg.dataset?.img_size ?? 512);
         setVal(els.cfgNumWorkers, cfg.dataset?.num_workers ?? 0);
+        setCb(els.cfgPersistentWorkers, cfg.dataset?.loader?.persistent_workers ?? true);
+        setVal(els.cfgPrefetchFactor, cfg.dataset?.loader?.prefetch_factor ?? 2);
+        setVal(els.cfgCacheSize, cfg.dataset?.loader?.cache_size ?? 32);
         setCb(els.cfgElasticTransform, cfg.dataset?.augmentation?.elastic_transform ?? false);
+        setCb(els.cfgDomainBalanceEnabled, cfg.dataset?.domain_balance?.enabled ?? true);
+        setVal(els.cfgDomainTargetProbability, cfg.dataset?.domain_balance?.target_probability ?? 0.4);
+        if (els.cfgDomainBalanceGroup) {
+            els.cfgDomainBalanceGroup.style.display = (cfg.dataset?.domain_balance?.enabled ?? true) ? '' : 'none';
+        }
+        setCb(els.cfgCrossValidationEnabled, cfg.dataset?.cross_validation?.enabled ?? false);
+        setVal(els.cfgNumFolds, cfg.dataset?.cross_validation?.num_folds ?? 3);
+        setVal(els.cfgFoldIndex, (cfg.dataset?.cross_validation?.fold_index ?? 0) + 1);
+        if (els.cfgFoldIndex) els.cfgFoldIndex.max = cfg.dataset?.cross_validation?.num_folds ?? 3;
+        if (els.cfgCrossValidationGroup) {
+            els.cfgCrossValidationGroup.style.display = (cfg.dataset?.cross_validation?.enabled ?? false) ? '' : 'none';
+        }
+        setCb(els.cfgTemporalEnabled, cfg.dataset?.temporal_2_5d?.enabled ?? false);
+        setCb(els.cfgFrangiEnabled, cfg.dataset?.frangi?.enabled ?? false);
+        setVal(els.cfgTrainFrangiDir, cfg.dataset?.frangi?.train_frangi_dir || '');
+        setVal(els.cfgValFrangiDir, cfg.dataset?.frangi?.val_frangi_dir || '');
+        setVal(els.cfgFrangiSigmas, (cfg.dataset?.frangi?.sigmas || [1.0,2.0,3.0,4.0,5.0]).join(','));
+        setVal(els.cfgFrangiMethod, cfg.dataset?.frangi?.method || 'hessian');
+        if (els.cfgFrangiGroup) {
+            els.cfgFrangiGroup.style.display = (cfg.dataset?.frangi?.enabled ?? false) ? '' : 'none';
+        }
         setCb(els.cfgPatchEnabled, cfg.dataset?.patch?.enabled ?? false);
         setVal(els.cfgPatchSize, cfg.dataset?.patch?.size ?? 640);
         setVal(els.cfgPatchForegroundProbability, cfg.dataset?.patch?.foreground_probability ?? 0.7);
@@ -391,6 +468,28 @@
         setVal(els.cfgPatience, cfg.training?.early_stopping?.patience || 10);
         setVal(els.cfgSaveDir, cfg.training?.checkpoint?.save_dir || 'checkpoints');
         setCb(els.cfgSaveBestOnly, cfg.training?.checkpoint?.save_best_only);
+        syncAdvancedDataControls();
+    }
+
+    function syncAdvancedDataControls() {
+        if (els.cfgDomainBalanceGroup) {
+            els.cfgDomainBalanceGroup.style.display = els.cfgDomainBalanceEnabled?.checked ? '' : 'none';
+        }
+        if (els.cfgCrossValidationGroup) {
+            els.cfgCrossValidationGroup.style.display = els.cfgCrossValidationEnabled?.checked ? '' : 'none';
+        }
+        if (els.cfgFoldIndex && els.cfgNumFolds) {
+            const folds = Math.min(5, Math.max(3, Number(els.cfgNumFolds.value) || 3));
+            els.cfgFoldIndex.max = String(folds);
+            els.cfgFoldIndex.value = String(Math.min(folds, Math.max(1, Number(els.cfgFoldIndex.value) || 1)));
+        }
+        if (els.cfgInChannels) {
+            const automaticChannels = els.cfgTemporalEnabled?.checked ? 3 : (els.cfgFrangiEnabled?.checked ? 2 : null);
+            const wasAutomatic = els.cfgInChannels.disabled;
+            els.cfgInChannels.disabled = automaticChannels !== null;
+            if (automaticChannels !== null) els.cfgInChannels.value = String(automaticChannels);
+            else if (wasAutomatic) els.cfgInChannels.value = '1';
+        }
     }
 
     function buildConfigFromForm() {
@@ -406,6 +505,11 @@
                 val_mask_dir: getVal(els.cfgValMaskDir),
                 img_size: getNum(els.cfgImgSize),
                 num_workers: getNum(els.cfgNumWorkers),
+                loader: {
+                    persistent_workers: getCb(els.cfgPersistentWorkers),
+                    prefetch_factor: getNum(els.cfgPrefetchFactor),
+                    cache_size: getNum(els.cfgCacheSize)
+                },
                 augmentation: {
                     ...(state.config?.dataset?.augmentation || {}),
                     elastic_transform: getCb(els.cfgElasticTransform)
@@ -416,16 +520,40 @@
                     foreground_probability: getNum(els.cfgPatchForegroundProbability),
                     min_foreground_ratio: state.config?.dataset?.patch?.min_foreground_ratio ?? 0.002
                 },
+                frangi: {
+                    enabled: getCb(els.cfgFrangiEnabled),
+                    train_frangi_dir: getVal(els.cfgTrainFrangiDir),
+                    val_frangi_dir: getVal(els.cfgValFrangiDir),
+                    method: getVal(els.cfgFrangiMethod),
+                    sigmas: (getVal(els.cfgFrangiSigmas) || '1.0,2.0,3.0,4.0,5.0').split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)),
+                    beta: state.config?.dataset?.frangi?.beta ?? 0.5,
+                    c: state.config?.dataset?.frangi?.c ?? 15.0
+                },
+                domain_balance: {
+                    enabled: getCb(els.cfgDomainBalanceEnabled),
+                    target_prefixes: state.config?.dataset?.domain_balance?.target_prefixes || ['dias_train_'],
+                    target_probability: getNum(els.cfgDomainTargetProbability),
+                    samples_per_epoch: state.config?.dataset?.domain_balance?.samples_per_epoch ?? 0
+                },
+                cross_validation: {
+                    enabled: getCb(els.cfgCrossValidationEnabled),
+                    num_folds: getNum(els.cfgNumFolds),
+                    fold_index: Math.max(0, getNum(els.cfgFoldIndex) - 1)
+                },
+                temporal_2_5d: {
+                    enabled: getCb(els.cfgTemporalEnabled)
+                },
                 pin_memory: state.config?.dataset?.pin_memory ?? true,
                 keep_aspect_ratio: state.config?.dataset?.keep_aspect_ratio ?? true
             },
             model: {
                 name: getVal(els.cfgModelName),
-                in_channels: getNum(els.cfgInChannels),
+                in_channels: getCb(els.cfgTemporalEnabled) ? 3 : (getCb(els.cfgFrangiEnabled) ? 2 : getNum(els.cfgInChannels)),
                 out_channels: getNum(els.cfgOutChannels),
                 encoder_name: getVal(els.cfgEncoderName) || 'resnet34',
                 pretrained: getCb(els.cfgPretrained),
-                deep_supervision: getCb(els.cfgDeepSupervision)
+                deep_supervision: getCb(els.cfgDeepSupervision),
+                input_mode: getCb(els.cfgTemporalEnabled) ? 'temporal' : 'grayscale'
             },
             training: {
                 batch_size: getNum(els.cfgBatchSize),
@@ -437,11 +565,11 @@
                 use_amp: getCb(els.cfgUseAmp),
                 deep_supervision_weights: state.config?.training?.deep_supervision_weights || [0.3, 0.2],
                 loss: {
-                    name: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? 'BCEDiceClDiceLoss' : 'BCEDiceLoss',
+                    name: getNum(els.cfgClDiceWeight) > 0 ? 'BCEDiceClDiceLoss' : 'BCEDiceLoss',
                     bce_weight: getNum(els.cfgBceWeight),
                     dice_weight: getNum(els.cfgDiceWeight),
-                    cl_dice_weight: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? getNum(els.cfgClDiceWeight) : 0.0,
-                    cldice_weight: ['resunet_aspp', 'vessel_fusion'].includes(getVal(els.cfgModelName)) ? getNum(els.cfgClDiceWeight) : 0.0,
+                    cl_dice_weight: getNum(els.cfgClDiceWeight),
+                    cldice_weight: getNum(els.cfgClDiceWeight),
                     dice_smooth: state.config?.training?.loss?.dice_smooth ?? 1e-6,
                     skeleton_iterations: state.config?.training?.loss?.skeleton_iterations ?? 5
                 },
@@ -479,12 +607,15 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (!res.ok) throw new Error('Failed to save config');
-            showToast('配置已保存', 'success');
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || '保存失败');
+            }
+            showToast(data.note || '配置已保存', 'success');
             await fetchConfig();
         } catch (e) {
             console.error(e);
-            showToast('保存配置失败', 'error');
+            showToast('保存配置失败: ' + e.message, 'error');
         }
     }
 
@@ -793,9 +924,10 @@
         try {
             state.inferenceFiles = await Promise.all(Array.from(files).slice(0, 32).map(readInferenceFile));
             state.inferenceImageBase64 = state.inferenceFiles[0]?.image_base64 || null;
-            const first = state.inferenceFiles[0];
-            if (first && els.infOriginal) {
-                els.infOriginal.src = first.dataUrl;
+            const previewIndex = els.infInputMode?.value === 'temporal' && state.inferenceFiles.length === 3 ? 1 : 0;
+            const preview = state.inferenceFiles[previewIndex];
+            if (preview && els.infOriginal) {
+                els.infOriginal.src = preview.dataUrl;
                 els.infOriginal.style.display = 'block';
                 const ph = document.getElementById('inf-orig-placeholder');
                 if (ph) ph.style.display = 'none';
@@ -818,9 +950,14 @@
             return;
         }
         
-        const cp = els.infCheckpoint ? els.infCheckpoint.value : '';
-        if (!cp) {
+        const checkpoints = getSelectedCheckpoints();
+        if (!checkpoints.length) {
             showToast('请选择模型权重', 'error');
+            return;
+        }
+        const temporalMode = els.infInputMode?.value === 'temporal';
+        if (temporalMode && state.inferenceFiles.length !== 3) {
+            showToast('三时相推理需要按前、当前、后顺序选择 3 张图像', 'error');
             return;
         }
         
@@ -833,15 +970,21 @@
         }
 
         try {
-            const endpoint = state.inferenceFiles.length > 1 ? '/api/inference-batch' : '/api/inference';
-            const body = state.inferenceFiles.length > 1 ? {
+            const endpoint = !temporalMode && state.inferenceFiles.length > 1 ? '/api/inference-batch' : '/api/inference';
+            const body = temporalMode ? {
+                temporal_images: state.inferenceFiles.map(item => item.image_base64),
+                image_base64: state.inferenceFiles[1].image_base64,
+                checkpoints,
+                threshold: threshold,
+                ...processingOptions
+            } : state.inferenceFiles.length > 1 ? {
                 images: state.inferenceFiles.map(item => ({ name: item.name, image_base64: item.image_base64 })),
-                checkpoint: cp,
+                checkpoints,
                 threshold: threshold,
                 ...processingOptions
             } : {
                 image_base64: state.inferenceImageBase64,
-                checkpoint: cp,
+                checkpoints,
                 threshold: threshold,
                 ...processingOptions
             };
@@ -884,6 +1027,14 @@
         return { processing: els.infProcessing?.value || 'config' };
     }
 
+    function getSelectedCheckpoints() {
+        if (!els.infCheckpoint) return [];
+        return Array.from(els.infCheckpoint.selectedOptions)
+            .map(option => option.value)
+            .filter(Boolean)
+            .slice(0, 5);
+    }
+
     function updateProcessingHint() {
         if (!els.infProcessingHint) return;
         const hints = {
@@ -917,22 +1068,26 @@
     }
 
     function updateModelSpecificControls(modelName) {
-        const topologyModel = ['resunet_aspp', 'vessel_fusion'].includes(modelName);
         const resnetModel = ['unet_resnet', 'resunet_aspp', 'vessel_fusion'].includes(modelName);
-        if (els.cfgPatchGroup) els.cfgPatchGroup.style.display = topologyModel ? '' : 'none';
         if (els.cfgEncoderGroup) els.cfgEncoderGroup.style.display = resnetModel ? '' : 'none';
-        if (els.cfgClDiceGroup) els.cfgClDiceGroup.style.display = topologyModel ? '' : 'none';
-        if (els.cfgDeepSupervisionGroup) els.cfgDeepSupervisionGroup.style.display = topologyModel ? '' : 'none';
+        // clDice 对所有模型可见
+        if (els.cfgClDiceGroup) els.cfgClDiceGroup.style.display = '';
+        // Patch 训练对所有模型可见
+        if (els.cfgPatchGroup) els.cfgPatchGroup.style.display = '';
+        // 深监督对所有模型可见
+        if (els.cfgDeepSupervisionGroup) els.cfgDeepSupervisionGroup.style.display = '';
         if (els.cfgLossWeightHint) {
-            els.cfgLossWeightHint.textContent = topologyModel
-                ? 'BCE + Dice + clDice 权重总和为 1.0（自动联动）'
-                : 'BCE 与 Dice 权重之和为 1.0（自动联动）';
+            const cldice = Number(els.cfgClDiceWeight?.value || 0);
+            if (cldice > 0) {
+                els.cfgLossWeightHint.textContent = 'BCE + Dice + clDice 权重总和为 1.0（自动联动）';
+            } else {
+                els.cfgLossWeightHint.textContent = 'BCE 与 Dice 权重之和为 1.0（自动联动）';
+            }
         }
     }
 
     function updateRegionWeights(changed) {
-        const topologyModel = ['resunet_aspp', 'vessel_fusion'].includes(els.cfgModelName?.value);
-        const cldice = topologyModel ? Number(els.cfgClDiceWeight?.value || 0) : 0;
+        const cldice = Number(els.cfgClDiceWeight?.value || 0);
         const regionTotal = Math.max(0, 1 - cldice);
         if (changed === 'bce') {
             const bce = Math.min(regionTotal, Math.max(0, Number(els.cfgBceWeight.value)));
@@ -946,16 +1101,23 @@
         if (els.cfgBceWeightValue) els.cfgBceWeightValue.textContent = Number(els.cfgBceWeight.value).toFixed(2);
         if (els.cfgDiceWeightValue) els.cfgDiceWeightValue.textContent = Number(els.cfgDiceWeight.value).toFixed(2);
         if (els.cfgClDiceWeightValue) els.cfgClDiceWeightValue.textContent = cldice.toFixed(2);
+        // 自动联动 in_channels: Frangi 启用时设为 2
+        if (els.cfgInChannels) {
+            els.cfgInChannels.value = (els.cfgFrangiEnabled && els.cfgFrangiEnabled.checked) ? 2 : 1;
+        }
     }
 
     async function scanThresholds() {
-        const checkpoint = els.infCheckpoint?.value;
-        if (!checkpoint) {
+        const checkpoints = getSelectedCheckpoints();
+        if (!checkpoints.length) {
             showToast('请选择模型权重', 'error');
             return;
         }
         const rawValues = (els.thresholdScanValues?.value || '').trim();
         let thresholds;
+        let scanStart = null;
+        let scanEnd = null;
+        const scanMode = els.thresholdScanMode?.value || 'coarse_fine';
         const rangeMatch = rawValues.match(/^\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*-\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*$/);
         if (rangeMatch) {
             const start = Number(rangeMatch[1]);
@@ -964,14 +1126,26 @@
                 showToast('扫描范围的起点不能大于终点', 'error');
                 return;
             }
-            thresholds = [];
-            for (let value = start; value <= end + 1e-9; value += 0.01) {
-                thresholds.push(Number(value.toFixed(2)));
+            scanStart = start;
+            scanEnd = end;
+            if (scanMode === 'custom') {
+                const step = Number(els.thresholdFineStep?.value || 0.01);
+                if (!(step > 0)) {
+                    showToast('自定义步长必须大于 0', 'error');
+                    return;
+                }
+                thresholds = [];
+                for (let value = start; value <= end + 1e-9; value += step) {
+                    thresholds.push(Number(value.toFixed(2)));
+                }
+                if (thresholds[thresholds.length - 1] < end) thresholds.push(Number(end.toFixed(2)));
+            } else {
+                thresholds = null;
             }
         } else {
             thresholds = rawValues.split(',').map(value => Number(value.trim())).filter(value => Number.isFinite(value));
         }
-        if (!thresholds.length || thresholds.length > 101 || thresholds.some(value => value < 0 || value > 1)) {
+        if (thresholds && (!thresholds.length || thresholds.length > 101 || thresholds.some(value => value < 0 || value > 1))) {
             showToast('阈值必须是 0 到 1 之间的数字，最多 101 个', 'error');
             return;
         }
@@ -985,14 +1159,24 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    checkpoint,
-                    thresholds,
+                    checkpoints,
+                    evaluation_split: els.thresholdEvaluationSplit?.value || 'dias_external',
+                    ...(scanMode === 'coarse_fine' && scanStart !== null ? {
+                        adaptive_scan: true,
+                        scan_start: scanStart,
+                        scan_end: scanEnd,
+                        coarse_step: Number(els.thresholdCoarseStep?.value || 0.05),
+                        fine_step: Number(els.thresholdFineStep?.value || 0.01)
+                    } : { thresholds }),
                     ...getProcessingOptions()
                 })
             });
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.error || '阈值扫描失败');
-            if (els.thresholdScanStatus) els.thresholdScanStatus.textContent = `已完成：${data.samples} 张验证图像，设备 ${data.device}`;
+            const modeText = data.scan_mode === 'coarse_fine'
+                ? `粗扫最佳 ${Number(data.coarse_best_threshold).toFixed(2)}，精扫区间 ${data.fine_range.map(value => Number(value).toFixed(2)).join('-')}`
+                : '自定义阈值扫描';
+            if (els.thresholdScanStatus) els.thresholdScanStatus.textContent = `已完成：${data.evaluation_label}，${data.samples} 张，${modeText}，设备 ${data.device}`;
             if (els.thresholdScanBest) {
                 els.thresholdScanBest.textContent = `最佳阈值 ${Number(data.best_threshold).toFixed(2)} | Dice ${formatNumber(data.best_dice)}`;
                 els.thresholdScanBest.style.display = 'block';
@@ -1027,6 +1211,60 @@
         }
     }
 
+    let frangiPollId = null;
+
+    async function pollFrangiProgress() {
+        if (frangiPollId) clearInterval(frangiPollId);
+        frangiPollId = setInterval(async () => {
+            try {
+                const res = await fetch('/api/frangi/status');
+                const data = await res.json();
+                if (!data.running) {
+                    clearInterval(frangiPollId);
+                    frangiPollId = null;
+                    // 恢复按钮状态
+                    if (els.btnGenerateFrangi) {
+                        els.btnGenerateFrangi.disabled = false;
+                        els.btnGenerateFrangi.textContent = '🔄 生成 Frangi 增强图';
+                    }
+                    if (els.btnStopFrangi) {
+                        els.btnStopFrangi.style.display = 'none';
+                    }
+                    if (data.result) {
+                        const r = data.result;
+                        if (els.frangiGenerateStatus) {
+                            els.frangiGenerateStatus.textContent = '✅ 完成！训练集 ' + r.train_count + ' 张，验证集 ' + r.val_count + ' 张';
+                        }
+                        showToast('Frangi 增强图生成完成', 'success');
+                    } else if (data.progress && data.progress.startsWith('失败')) {
+                        if (els.frangiGenerateStatus) {
+                            els.frangiGenerateStatus.textContent = '❌ ' + data.progress;
+                        }
+                        showToast('Frangi 生成失败', 'error');
+                    } else if (data.progress && data.progress.startsWith('已停止')) {
+                        if (els.frangiGenerateStatus) {
+                            els.frangiGenerateStatus.textContent = '⏹ ' + data.progress;
+                        }
+                        showToast('Frangi 生成已停止', 'info');
+                    }
+                    return;
+                }
+                if (els.frangiGenerateStatus) {
+                    let msg = data.progress || '处理中...';
+                    if (data.train_total > 0) {
+                        msg += ' 训练集 ' + data.train_done + '/' + data.train_total;
+                    }
+                    if (data.val_total > 0) {
+                        msg += ' 验证集 ' + data.val_done + '/' + data.val_total;
+                    }
+                    els.frangiGenerateStatus.textContent = msg;
+                }
+            } catch (e) {
+                // 忽略轮询错误
+            }
+        }, 1000);
+    }
+
     // 9. Event Listeners Setup
     function setupEventListeners() {
         // Config Form Buttons
@@ -1057,6 +1295,129 @@
             els.cfgModelName.addEventListener('change', () => {
                 updateModelSpecificControls(els.cfgModelName.value);
                 updateRegionWeights('bce');
+            });
+        }
+
+        // Frangi 开关切换
+        if (els.cfgFrangiEnabled) {
+            els.cfgFrangiEnabled.addEventListener('change', () => {
+                if (els.cfgFrangiEnabled.checked && els.cfgTemporalEnabled) {
+                    els.cfgTemporalEnabled.checked = false;
+                }
+                if (els.cfgFrangiGroup) {
+                    els.cfgFrangiGroup.style.display = els.cfgFrangiEnabled.checked ? '' : 'none';
+                }
+                syncAdvancedDataControls();
+                updateRegionWeights('bce');
+            });
+        }
+        if (els.cfgTemporalEnabled) {
+            els.cfgTemporalEnabled.addEventListener('change', () => {
+                if (els.cfgTemporalEnabled.checked && els.cfgFrangiEnabled) {
+                    els.cfgFrangiEnabled.checked = false;
+                    if (els.cfgFrangiGroup) els.cfgFrangiGroup.style.display = 'none';
+                }
+                syncAdvancedDataControls();
+            });
+        }
+        if (els.cfgDomainBalanceEnabled) {
+            els.cfgDomainBalanceEnabled.addEventListener('change', syncAdvancedDataControls);
+        }
+        if (els.cfgCrossValidationEnabled) {
+            els.cfgCrossValidationEnabled.addEventListener('change', syncAdvancedDataControls);
+        }
+        if (els.cfgNumFolds) {
+            els.cfgNumFolds.addEventListener('input', syncAdvancedDataControls);
+        }
+
+        // Frangi 生成按钮
+        if (els.btnGenerateFrangi) {
+            els.btnGenerateFrangi.addEventListener('click', async () => {
+                if (els.btnGenerateFrangi) {
+                    els.btnGenerateFrangi.disabled = true;
+                    els.btnGenerateFrangi.textContent = '⏳ 启动中...';
+                }
+                if (els.frangiGenerateStatus) {
+                    els.frangiGenerateStatus.textContent = '正在启动后台生成...';
+                }
+                try {
+                    const res = await fetch('/api/frangi/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(buildConfigFromForm())
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) {
+                        throw new Error(data.message || '启动失败');
+                    }
+                    // 显示停止按钮，隐藏生成按钮
+                    if (els.btnStopFrangi) els.btnStopFrangi.style.display = '';
+                    els.btnGenerateFrangi.textContent = '⏳ 生成中...';
+                    // 开始轮询进度
+                    pollFrangiProgress();
+                } catch (error) {
+                    if (els.frangiGenerateStatus) {
+                        els.frangiGenerateStatus.textContent = '❌ 失败: ' + error.message;
+                    }
+                    showToast('生成 Frangi 图失败: ' + error.message, 'error');
+                    if (els.btnGenerateFrangi) {
+                        els.btnGenerateFrangi.disabled = false;
+                        els.btnGenerateFrangi.textContent = '🔄 生成 Frangi 增强图';
+                    }
+                }
+            });
+        }
+
+        // Frangi 停止按钮
+        if (els.btnStopFrangi) {
+            els.btnStopFrangi.addEventListener('click', async () => {
+                if (els.btnStopFrangi) els.btnStopFrangi.disabled = true;
+                try {
+                    const res = await fetch('/api/frangi/stop', { method: 'POST' });
+                    const data = await res.json();
+                    if (!res.ok && !data.success) {
+                        showToast(data.message || '停止失败', 'error');
+                        if (els.btnStopFrangi) els.btnStopFrangi.disabled = false;
+                    } else {
+                        showToast('正在停止...', 'info');
+                    }
+                } catch (error) {
+                    showToast('停止请求失败: ' + error.message, 'error');
+                    if (els.btnStopFrangi) els.btnStopFrangi.disabled = false;
+                }
+            });
+        }
+
+        // Frangi 清空按钮
+        if (els.btnClearFrangi) {
+            els.btnClearFrangi.addEventListener('click', async () => {
+                if (!confirm('确定要清空所有已生成的 Frangi 增强图吗？此操作不可撤销。')) return;
+                if (els.btnClearFrangi) {
+                    els.btnClearFrangi.disabled = true;
+                    els.btnClearFrangi.textContent = '⏳ 清空中...';
+                }
+                try {
+                    const res = await fetch('/api/frangi/clear', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(buildConfigFromForm())
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) {
+                        throw new Error(data.message || '清空失败');
+                    }
+                    if (els.frangiGenerateStatus) {
+                        els.frangiGenerateStatus.textContent = '🗑 ' + data.message;
+                    }
+                    showToast(data.message, 'success');
+                } catch (error) {
+                    showToast('清空失败: ' + error.message, 'error');
+                } finally {
+                    if (els.btnClearFrangi) {
+                        els.btnClearFrangi.disabled = false;
+                        els.btnClearFrangi.textContent = '🗑 清空 Frangi 图';
+                    }
+                }
             });
         }
 
@@ -1095,6 +1456,22 @@
 
         if (els.btnRunInference) {
             els.btnRunInference.addEventListener('click', runInference);
+        }
+        if (els.infCheckpoint) {
+            els.infCheckpoint.addEventListener('change', () => {
+                const selected = Array.from(els.infCheckpoint.selectedOptions);
+                if (selected.length > 5) {
+                    selected.slice(5).forEach(option => { option.selected = false; });
+                    showToast('概率集成最多选择 5 个权重', 'error');
+                }
+            });
+        }
+        if (els.infInputMode) {
+            els.infInputMode.addEventListener('change', () => {
+                const previewIndex = els.infInputMode.value === 'temporal' && state.inferenceFiles.length === 3 ? 1 : 0;
+                const preview = state.inferenceFiles[previewIndex];
+                if (preview && els.infOriginal) els.infOriginal.src = preview.dataUrl;
+            });
         }
         if (els.btnThresholdScan) els.btnThresholdScan.addEventListener('click', scanThresholds);
         if (els.infProcessing) {
