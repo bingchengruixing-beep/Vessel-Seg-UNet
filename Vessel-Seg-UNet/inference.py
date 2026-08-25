@@ -64,6 +64,7 @@ class VesselSegmentor:
             model_cfg["name"],
             in_channels=model_cfg["in_channels"],
             out_channels=model_cfg["out_channels"],
+            phase_classes=model_cfg.get("phase_classes", 0),
         )
         load_model_state(self.model, self.checkpoint)
         self.model.to(self.device).eval()
@@ -94,8 +95,10 @@ class VesselSegmentor:
             raise ValueError("predict_array expects a two-dimensional grayscale image")
         original_h, original_w = image.shape
         tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
+        output = self.model(tensor)
+        logits = output[0] if isinstance(output, tuple) else output
         predictions = predictions_from_logits(
-            self.model(tensor),
+            logits,
             threshold=float(self.threshold),
             apply_postprocess=bool(self.postprocess_config["enabled"]),
             postprocess_config=self.postprocess_config,
@@ -103,6 +106,19 @@ class VesselSegmentor:
         mask = predictions[0, 0].cpu().numpy().astype(np.uint8) * 255
         mask = self._restore_original_geometry(mask, original_h, original_w)
         return mask
+
+    @torch.no_grad()
+    def predict_phase(self, image: np.ndarray) -> int:
+        """推断图像所属相位 id(0:2~3s, 1:4s, 2:5~6s, 3:dataset2)。
+
+        要求检查点含相位分类头(model.phase_classes > 0)。
+        用于无元数据图像的"预判定"。
+        """
+        tensor = self.transform(image=image)["image"].unsqueeze(0).to(self.device)
+        output = self.model(tensor)
+        if isinstance(output, tuple):
+            return int(output[1].argmax(dim=1).item())
+        raise RuntimeError("Checkpoint has no phase head (phase_classes == 0)")
 
     def _restore_original_geometry(self, mask: np.ndarray, original_h: int, original_w: int) -> np.ndarray:
         """Remove validation/inference padding before resizing the prediction back."""

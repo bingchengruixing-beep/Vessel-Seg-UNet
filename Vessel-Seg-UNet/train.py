@@ -60,6 +60,7 @@ def main():
         model_cfg["name"],
         in_channels=model_cfg["in_channels"],
         out_channels=model_cfg["out_channels"],
+        phase_classes=model_cfg.get("phase_classes", 0),
     )
     logger.info(
         "Model: %s | Trainable parameters: %s",

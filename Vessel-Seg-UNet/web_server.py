@@ -107,6 +107,7 @@ def run_training():
             model_cfg["name"],
             in_channels=model_cfg["in_channels"],
             out_channels=model_cfg["out_channels"],
+            phase_classes=model_cfg.get("phase_classes", 0),
         )
         optimizer = build_optimizer(model, config)
         trainer = Trainer(
@@ -220,7 +221,12 @@ def train_status():
 def model_info():
     config = _load_config()
     model_cfg = config["model"]
-    model = build_model(model_cfg["name"], in_channels=model_cfg["in_channels"], out_channels=model_cfg["out_channels"])
+    model = build_model(
+        model_cfg["name"],
+        in_channels=model_cfg["in_channels"],
+        out_channels=model_cfg["out_channels"],
+        phase_classes=model_cfg.get("phase_classes", 0),
+    )
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     return jsonify({"success": True, "data": {
         "name": model_cfg["name"],

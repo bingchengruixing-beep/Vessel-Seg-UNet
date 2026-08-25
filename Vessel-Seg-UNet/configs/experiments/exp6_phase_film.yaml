@@ -1,10 +1,10 @@
-# All paths are relative to the project root unless they are absolute data paths.
+# 实验 6: FiLM 相位条件化 + 相位分类辅助损失(基于胜出的 clDice 配方)
+# 相位: 0=dataset1-2~3s, 1=dataset1-4s, 2=dataset1-5~6s, 3=dataset2-4s
 dataset:
   img_size: 512
   num_workers: 0
   pin_memory: true
   keep_aspect_ratio: true
-  # clDice 金标准骨架的计算分辨率(最长边),256 可在保证拓扑的前提下大幅提速
   skeleton_size: 256
   train_image_dir: data/train/images
   train_mask_dir: data/train/masks
@@ -15,10 +15,11 @@ model:
   name: unet_baseline
   in_channels: 1
   out_channels: 1
+  phase_classes: 4
 
 training:
-  batch_size: 1
-  epochs: 100
+  batch_size: 4
+  epochs: 80
   learning_rate: 0.0001
   weight_decay: 0.0001
   optimizer: adamw
@@ -28,39 +29,30 @@ training:
   warmup_epochs: 5
   grad_clip: 1.0
   ema_decay: 0.999
-  # FiLM 相位条件化与相位分类辅助损失
-  phase_condition: false
-  phase_loss_weight: 0.0
+  phase_condition: true
+  phase_loss_weight: 0.1
   loss:
     name: BCEDiceLoss
     bce_weight: 0.5
     dice_weight: 0.5
     dice_smooth: 0.000001
-    # 大于 0 时启用 clDice 中心线监督(数据集会额外返回骨架)
-    cl_dice_weight: 0.0
-    focal_tversky:
-      alpha: 0.7
-      beta: 0.3
-      gamma: 0.75
+    cl_dice_weight: 0.5
   early_stopping:
     patience: 10
   checkpoint:
-    # This directory is intentionally restricted to a project-relative location.
-    save_dir: checkpoints
+    save_dir: checkpoints/exp6_phase_film
     save_best_only: true
     save_interval: 10
 
 evaluation:
   threshold: 0.5
-  # Enable this to measure the exact masks produced in deployment.
   apply_postprocess: false
 
 inference:
   threshold: 0.5
-  # null inherits dataset.img_size, which avoids a silent training/inference mismatch.
   img_size: null
   postprocess:
     enabled: true
-    min_component_size: 50
+    min_component_size: 10
     max_hole_size: 100
     morph_close_kernel: 3
